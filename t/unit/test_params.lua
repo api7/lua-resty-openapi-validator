@@ -219,4 +219,57 @@ T.describe("params: deepObject anyOf integer branch", function()
     T.ok(not errs or #errs == 0, "no errors")
 end)
 
+-- Same shape as the anyOf cases but using oneOf, to lock in both branches
+-- of the runtime path.
+T.describe("params: deepObject oneOf object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { oneOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000" }, {})
+    T.ok(ok, "deepObject oneOf object form accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject oneOf integer branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { oneOf = {
+              { type = "object", properties = { gt = { type = "integer" } } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "1700000000" }, {})
+    T.ok(ok, "deepObject oneOf scalar (integer branch) accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+-- Negative: a value that matches none of the anyOf branches must be rejected.
+T.describe("params: deepObject anyOf rejects unmatched scalar", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = { gt = { type = "integer" } } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "not-a-number" }, {})
+    T.ok(not ok, "non-integer scalar rejected")
+    T.ok(errs and #errs >= 1, "error reported")
+end)
+
 T.done()

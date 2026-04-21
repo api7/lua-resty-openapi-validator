@@ -1,0 +1,60 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Test API 3.1",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/items": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemList"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ItemList": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "prefixItems": [
+              { "type": "string" },
+              { "type": "integer" }
+            ],
+            "items": { "type": "string" },
+            "type": "array"
+          },
+          "metadata": {
+            "type": ["object", "null"],
+            "dependentRequired": {
+              "name": ["email"]
+            },
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string" }
+            }
+          }
+        },
+        "$defs": {
+          "Helper": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

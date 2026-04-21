@@ -36,6 +36,10 @@ jobs:
         run: |
           sudo luarocks install jsonschema
           sudo luarocks install lua-resty-radixtree
+          # Overlay latest jsonschema source for new format validators (uuid, date, date-time, uri)
+          git clone --depth 1 https://github.com/api7/jsonschema.git /tmp/jsonschema
+          JSONSCHEMA_PATH=$(find /usr -name "jsonschema.lua" -path "*/share/lua/*" | head -1)
+          sudo cp /tmp/jsonschema/lib/jsonschema.lua "$JSONSCHEMA_PATH"
 
       - name: Run tests
         run: |

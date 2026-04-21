@@ -162,4 +162,157 @@ T.describe("params: error format", function()
     T.like(formatted, "path parameter 'id'", "format includes path param")
 end)
 
+-- Test: deepObject query param with anyOf {object, integer} schema.
+-- Common in real-world specs (e.g. Stripe range_query_specs: created, etc.)
+-- where a filter accepts either a Unix timestamp or {gt, gte, lt, lte} object.
+T.describe("params: deepObject anyOf optional missing", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, gte = { type = "integer" },
+                  lt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route, {}, {}, {})
+    T.ok(ok, "missing optional deepObject anyOf accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject anyOf object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000", ["created[lte]"] = "1800000000" }, {})
+    T.ok(ok, "deepObject object form accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject anyOf integer branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "1700000000" }, {})
+    T.ok(ok, "deepObject scalar (integer branch) accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+-- Same shape as the anyOf cases but using oneOf, to lock in both branches
+-- of the runtime path.
+T.describe("params: deepObject oneOf object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { oneOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000" }, {})
+    T.ok(ok, "deepObject oneOf object form accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject oneOf integer branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { oneOf = {
+              { type = "object", properties = { gt = { type = "integer" } } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "1700000000" }, {})
+    T.ok(ok, "deepObject oneOf scalar (integer branch) accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+-- Negative: a value that matches none of the anyOf branches must be rejected.
+T.describe("params: deepObject anyOf rejects unmatched scalar", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = { gt = { type = "integer" } } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "not-a-number" }, {})
+    T.ok(not ok, "non-integer scalar rejected")
+    T.ok(errs and #errs >= 1, "error reported")
+end)
+
+-- Union type arrays from nullable normalization, e.g. type = {"object","null"},
+-- must still be recognised as an object branch.
+T.describe("params: deepObject anyOf nullable object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = { "object", "null" }, properties = {
+                  gt = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000" }, {})
+    T.ok(ok, "nullable object branch parsed")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+-- Object branch expressed via composition (allOf) must also be detected, so
+-- parse_deep_object is invoked and the value reaches the union validator
+-- (instead of being dropped or coerced as a scalar).
+T.describe("params: deepObject anyOf composed (allOf) object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { allOf = {
+                  { type = "object", properties = {
+                      gt = { type = "string" },
+                  } },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "abc" }, {})
+    T.ok(ok, "composed object branch parsed")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
 T.done()

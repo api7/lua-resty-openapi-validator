@@ -47,6 +47,40 @@ local function get_validator(schema)
     return nil
 end
 
+--- Collect all possible types from a schema, including composite sub-schemas.
+local function collect_types(schema, seen)
+    if not schema then return {} end
+    seen = seen or {}
+    if seen[schema] then return {} end
+    seen[schema] = true
+
+    local types = {}
+    local stype = schema.type
+    if stype then
+        if type(stype) == "table" then
+            for _, t in ipairs(stype) do
+                types[t] = true
+            end
+        else
+            types[stype] = true
+        end
+    end
+
+    for _, key in ipairs({"anyOf", "oneOf", "allOf"}) do
+        local composite = schema[key]
+        if composite then
+            for _, sub in ipairs(composite) do
+                local sub_types = collect_types(sub, seen)
+                for t in pairs(sub_types) do
+                    types[t] = true
+                end
+            end
+        end
+    end
+
+    return types
+end
+
 --- Coerce a string value to the type declared in schema.
 -- @param value string   raw value from request
 -- @param schema table   parameter schema
@@ -85,6 +119,20 @@ local function coerce_value(value, schema)
             return false
         end
         return value
+    end
+
+    -- no direct type — check composite schemas for possible types
+    if not stype then
+        local possible = collect_types(schema)
+        -- try coercion in order: boolean first (most specific), then number
+        if possible["boolean"] then
+            if value == "true" or value == "1" then return true end
+            if value == "false" or value == "0" then return false end
+        end
+        if possible["integer"] or possible["number"] then
+            local n = tonumber(value)
+            if n then return n end
+        end
     end
 
     return value
@@ -187,6 +235,18 @@ end
 --   query: form, explode=true
 --   header: simple, explode=false
 local function deserialize_param(raw_value, param, query_args)
+    -- handle content-based parameters (param.content.application/json) first,
+    -- since these params have no param.schema (schema lives inside content)
+    if param.content then
+        local json_content = param.content["application/json"]
+        if json_content and json_content.schema and has_cjson then
+            local decoded = cjson.decode(raw_value)
+            if decoded ~= nil then
+                return decoded
+            end
+        end
+    end
+
     local schema = param.schema
     if not schema then
         return raw_value
@@ -206,17 +266,6 @@ local function deserialize_param(raw_value, param, query_args)
     end
     if explode == nil then
         explode = (style == "form")
-    end
-
-    -- handle content-based parameters (param.content.application/json)
-    if param.content then
-        local json_content = param.content["application/json"]
-        if json_content and json_content.schema and has_cjson then
-            local decoded = cjson.decode(raw_value)
-            if decoded ~= nil then
-                return decoded
-            end
-        end
     end
 
     local stype = schema.type
@@ -351,12 +400,24 @@ function _M.validate(route, path_params, query_args, headers, skip)
             end
 
             local schema = param.schema
+            -- for content-based parameters, use the content schema
+            if not schema and param.content then
+                local json_ct = param.content["application/json"]
+                if json_ct then
+                    schema = json_ct.schema
+                end
+            end
             if not schema then
                 goto continue
             end
 
             -- deserialize and coerce
             local value = deserialize_param(raw, param, query_args)
+
+            -- for deepObject, nil means no matching keys found — skip if optional
+            if value == nil and not param.required then
+                goto continue
+            end
 
             -- validate with jsonschema
             local validator = get_validator(schema)

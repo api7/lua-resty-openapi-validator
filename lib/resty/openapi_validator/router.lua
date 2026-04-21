@@ -16,6 +16,7 @@ local sub_str      = string.sub
 local str_gsub     = string.gsub
 local str_byte     = string.byte
 local str_upper    = string.upper
+local str_lower    = string.lower
 local str_gmatch   = string.gmatch
 
 local SLASH = str_byte("/")
@@ -86,7 +87,8 @@ local function find_body_info(operation)
         primary_schema = content["application/json"].schema
     else
         for ct, media in pairs(content) do
-            if ct == "*/*" or str_find(ct, "json") then
+            local ct_lower = str_lower(ct)
+            if ct == "*/*" or str_find(ct_lower, "json", 1, true) then
                 primary_schema = media.schema
                 break
             end

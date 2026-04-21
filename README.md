@@ -44,10 +44,10 @@ luarocks install lua-resty-openapi-validator
 > install by source
 
 ```shell
-$ git clone https://github.com/api7/lua-resty-openapi-validator.git
-$ cd lua-resty-openapi-validator
-$ make dev
-$ sudo make install
+git clone https://github.com/api7/lua-resty-openapi-validator.git
+cd lua-resty-openapi-validator
+make dev
+sudo make install
 ```
 
 [Back to TOC](#table-of-contents)

@@ -17,6 +17,7 @@ dependencies = {
     "lua >= 5.1",
     "jsonschema",
     "lua-resty-radixtree",
+    "lua-cjson",
 }
 
 build = {

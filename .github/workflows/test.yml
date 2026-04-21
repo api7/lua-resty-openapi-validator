@@ -34,7 +34,7 @@ jobs:
 
       - name: Install Lua dependencies
         run: |
-          sudo luarocks install https://raw.githubusercontent.com/api7/jsonschema/v0.9.10/rockspec/jsonschema-0.9.10-0.rockspec
+          sudo luarocks install jsonschema 0.9.10
           sudo luarocks install lua-resty-radixtree
 
       - name: Run tests

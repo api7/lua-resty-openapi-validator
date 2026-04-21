@@ -1,44 +1,51 @@
---- Router: maps incoming (method, path) to OpenAPI operations.
+-- Router: maps incoming (method, path) to OpenAPI operations.
 -- Uses lua-resty-radixtree for high-performance path matching.
 -- Converts OpenAPI path templates ({param}) to radixtree :param syntax.
 
 local _M = {}
-local _MT = { __index = _M }
 
 local radixtree = require("resty.radixtree")
 
-local type = type
-local pairs = pairs
-local ipairs = ipairs
-local insert = table.insert
-local find = string.find
-local sub = string.sub
-local gsub = string.gsub
-local byte = string.byte
+local setmetatable = setmetatable
+local tostring     = tostring
+local pairs        = pairs
+local ipairs       = ipairs
+local tab_insert   = table.insert
+local str_find     = string.find
+local sub_str      = string.sub
+local str_gsub     = string.gsub
+local str_byte     = string.byte
+local str_upper    = string.upper
+local str_gmatch   = string.gmatch
 
-local SLASH = byte("/")
+local SLASH = str_byte("/")
 
 local HTTP_METHODS = {
     GET = true, POST = true, PUT = true, DELETE = true,
     PATCH = true, HEAD = true, OPTIONS = true, TRACE = true,
 }
 
---- Convert OpenAPI path template to radixtree format.
--- e.g. "/users/{id}/posts/{postId}" → "/users/:id/posts/:postId"
+local _router_mt = { __index = _M }
+
+
+-- Convert OpenAPI path template to radixtree format.
+-- e.g. "/users/{id}/posts/{postId}" -> "/users/:id/posts/:postId"
 local function convert_path(path_template)
-    return (gsub(path_template, "{([^}]+)}", ":_%1"))
+    return (str_gsub(path_template, "{([^}]+)}", ":_%1"))
 end
 
---- Extract param names from {param} in path template.
+
+-- Extract param names from {param} in path template.
 local function extract_param_names(path_template)
     local names = {}
-    for name in path_template:gmatch("{([^}]+)}") do
-        insert(names, name)
+    for name in str_gmatch(path_template, "{([^}]+)}") do
+        tab_insert(names, name)
     end
     return names
 end
 
---- Collect and organize parameters for an operation.
+
+-- Collect and organize parameters for an operation.
 local function collect_params(path_item, operation)
     local all_params = {}
     if path_item.parameters then
@@ -56,13 +63,14 @@ local function collect_params(path_item, operation)
     for _, p in pairs(all_params) do
         local loc = p["in"]
         if by_loc[loc] then
-            insert(by_loc[loc], p)
+            tab_insert(by_loc[loc], p)
         end
     end
     return by_loc
 end
 
---- Find request body schema and content map.
+
+-- Find request body schema and content map.
 local function find_body_info(operation)
     if not operation.requestBody then
         return nil, nil, false
@@ -73,19 +81,19 @@ local function find_body_info(operation)
         return nil, nil, body_required
     end
 
-    -- find the primary schema (prefer JSON)
     local primary_schema
     if content["application/json"] then
         primary_schema = content["application/json"].schema
     else
         for ct, media in pairs(content) do
-            if ct == "*/*" or find(ct, "json") then
+            if ct == "*/*" or str_find(ct, "json") then
                 primary_schema = media.schema
                 break
             end
         end
         if not primary_schema then
-            for _, media in pairs(content) do
+            -- pick the first available schema as fallback
+            for _, media in pairs(content) do  -- luacheck: ignore 512
                 primary_schema = media.schema
                 break
             end
@@ -95,16 +103,15 @@ local function find_body_info(operation)
     return primary_schema, content, body_required
 end
 
---- Build a router from a compiled OpenAPI spec.
--- @param spec table  the parsed+normalized spec (with paths)
--- @return table  router object
+
+-- Build a router from a compiled OpenAPI spec.
 function _M.new(spec)
     local radix_routes = {}
-    local route_metadata = {} -- id → route detail
+    local route_metadata = {}
 
     local paths = spec.paths
     if not paths then
-        return setmetatable({ rx = nil, metadata = route_metadata }, _MT)
+        return setmetatable({ rx = nil, metadata = route_metadata }, _router_mt)
     end
 
     local route_id = 0
@@ -113,28 +120,29 @@ function _M.new(spec)
         local param_names = extract_param_names(path_template)
 
         for method, operation in pairs(path_item) do
-            local m = method:upper()
+            local m = str_upper(method)
             if HTTP_METHODS[m] then
                 route_id = route_id + 1
                 local id = tostring(route_id)
 
                 local params = collect_params(path_item, operation)
-                local body_schema, body_content, body_required = find_body_info(operation)
+                local body_schema, body_content, body_required =
+                    find_body_info(operation)
 
                 route_metadata[id] = {
                     path_template = path_template,
-                    param_names = param_names,
-                    method = m,
-                    operation = operation,
-                    params = params,
-                    body_schema = body_schema,
-                    body_content = body_content,
+                    param_names   = param_names,
+                    method        = m,
+                    operation     = operation,
+                    params        = params,
+                    body_schema   = body_schema,
+                    body_content  = body_content,
                     body_required = body_required,
                 }
 
-                insert(radix_routes, {
-                    paths = { radix_path },
-                    methods = { m },
+                tab_insert(radix_routes, {
+                    paths    = { radix_path },
+                    methods  = { m },
                     metadata = id,
                 })
             end
@@ -142,39 +150,36 @@ function _M.new(spec)
     end
 
     if #radix_routes == 0 then
-        return setmetatable({ rx = nil, metadata = route_metadata }, _MT)
+        return setmetatable({ rx = nil, metadata = route_metadata }, _router_mt)
     end
 
     local rx = radixtree.new(radix_routes)
-    return setmetatable({ rx = rx, metadata = route_metadata }, _MT)
+    return setmetatable({ rx = rx, metadata = route_metadata }, _router_mt)
 end
 
---- Match an incoming request to a route.
--- @param method string  HTTP method (uppercase)
--- @param path string    request URI path (without query string)
--- @return table|nil  matched route (with params, body_schema, etc.)
--- @return table|nil  extracted path parameters { name = value }
+
+-- Match an incoming request to a route.
 function _M.match(self, method, path)
     if not self.rx then
         return nil, nil
     end
 
-    method = method:upper()
+    method = str_upper(method)
 
     -- strip query string if present
-    local qpos = find(path, "?", 1, true)
+    local qpos = str_find(path, "?", 1, true)
     if qpos then
-        path = sub(path, 1, qpos - 1)
+        path = sub_str(path, 1, qpos - 1)
     end
 
     -- normalize: remove trailing slash (except root)
-    if #path > 1 and byte(path, #path) == SLASH then
-        path = sub(path, 1, #path - 1)
+    if #path > 1 and str_byte(path, #path) == SLASH then
+        path = sub_str(path, 1, #path - 1)
     end
 
     local matched = {}
     local opts = {
-        method = method,
+        method  = method,
         matched = matched,
     }
 

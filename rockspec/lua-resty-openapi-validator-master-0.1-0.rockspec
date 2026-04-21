@@ -1,0 +1,34 @@
+package = "lua-resty-openapi-validator"
+version = "master-0.1-0"
+
+source = {
+    url = "git+https://github.com/api7/lua-resty-openapi-validator.git",
+    branch = "main",
+}
+
+description = {
+    summary = "Pure Lua OpenAPI request validator for OpenResty",
+    homepage = "https://github.com/api7/lua-resty-openapi-validator",
+    license = "Apache-2.0",
+    maintainer = "API7.ai",
+}
+
+dependencies = {
+    "lua >= 5.1",
+    "jsonschema",
+    "lua-resty-radixtree",
+}
+
+build = {
+    type = "builtin",
+    modules = {
+        ["resty.openapi_validator"]           = "lib/resty/openapi_validator/init.lua",
+        ["resty.openapi_validator.loader"]    = "lib/resty/openapi_validator/loader.lua",
+        ["resty.openapi_validator.refs"]      = "lib/resty/openapi_validator/refs.lua",
+        ["resty.openapi_validator.normalize"] = "lib/resty/openapi_validator/normalize.lua",
+        ["resty.openapi_validator.router"]    = "lib/resty/openapi_validator/router.lua",
+        ["resty.openapi_validator.params"]    = "lib/resty/openapi_validator/params.lua",
+        ["resty.openapi_validator.body"]      = "lib/resty/openapi_validator/body.lua",
+        ["resty.openapi_validator.errors"]    = "lib/resty/openapi_validator/errors.lua",
+    },
+}

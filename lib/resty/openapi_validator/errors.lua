@@ -1,24 +1,23 @@
---- Error types for OpenAPI validation.
+-- Error types for OpenAPI validation.
 
 local _M = {}
 
---- Create a validation error.
--- @param location string   "path" | "query" | "header" | "body"
--- @param param string|nil  parameter name (nil for body errors)
--- @param message string    human-readable error
--- @return table
+local ipairs     = ipairs
+local tab_concat = table.concat
+
+
+-- Create a validation error.
 function _M.new(location, param, message)
     return {
         location = location,
-        param = param,
-        message = message,
+        param    = param,
+        message  = message,
     }
 end
 
---- Format a list of errors into a human-readable string.
+
+-- Format a list of errors into a human-readable string.
 -- Produces output similar to kin-openapi for compatibility.
--- @param errs table  list of error tables
--- @return string
 function _M.format(errs)
     if not errs or #errs == 0 then
         return ""
@@ -35,7 +34,7 @@ function _M.format(errs)
         parts[#parts + 1] = s
     end
 
-    return table.concat(parts, "\n")
+    return tab_concat(parts, "\n")
 end
 
 return _M

@@ -81,7 +81,7 @@ local spec = cjson.encode({
 -- by default, so the body satisfies both allOf compositions. This is correct
 -- jsonschema oneOf behavior — kin-openapi relies on discriminator logic to
 -- pick the right branch.
-T.describe("discriminator: objA body matches multiple oneOf branches (no discriminator support)", function()
+T.describe("discriminator: objA body resolved via discriminator", function()
     local v, err = ov.compile(spec)
     T.ok(v, "spec should compile: " .. tostring(err))
 
@@ -94,8 +94,56 @@ T.describe("discriminator: objA body matches multiple oneOf branches (no discrim
         }),
         content_type = "application/json",
     })
-    T.ok(not ok, "should fail: matches both oneOf branches without discriminator")
-    T.like(verr, "matches both", "error mentions matching multiple schemas")
+    T.ok(ok, "should pass with discriminator support: " .. tostring(verr))
+end)
+
+T.describe("discriminator: objB body resolved via discriminator", function()
+    local v, err = ov.compile(spec)
+    T.ok(v, "spec should compile: " .. tostring(err))
+
+    local ok, verr = v:validate_request({
+        method = "PUT",
+        path = "/blob",
+        body = cjson.encode({
+            discr = "objB",
+            value = 42,
+        }),
+        content_type = "application/json",
+    })
+    T.ok(ok, "objB should pass: " .. tostring(verr))
+end)
+
+T.describe("discriminator: unknown discriminator value fails", function()
+    local v, err = ov.compile(spec)
+    T.ok(v, "spec should compile: " .. tostring(err))
+
+    local ok, verr = v:validate_request({
+        method = "PUT",
+        path = "/blob",
+        body = cjson.encode({
+            discr = "objC",
+            base64 = "data",
+        }),
+        content_type = "application/json",
+    })
+    T.ok(not ok, "should fail for unknown discriminator value")
+    T.like(verr, "does not match", "error mentions no matching schema")
+end)
+
+T.describe("discriminator: missing discriminator property fails", function()
+    local v, err = ov.compile(spec)
+    T.ok(v, "spec should compile: " .. tostring(err))
+
+    local ok, verr = v:validate_request({
+        method = "PUT",
+        path = "/blob",
+        body = cjson.encode({
+            base64 = "data",
+        }),
+        content_type = "application/json",
+    })
+    T.ok(not ok, "should fail for missing discriminator property")
+    T.like(verr, "missing", "error mentions missing property")
 end)
 
 -- When schemas use additionalProperties: false + required fields, oneOf

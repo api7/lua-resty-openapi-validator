@@ -222,6 +222,105 @@ local function find_body_schema_for_content_type(route, content_type)
 end
 
 
+-- Check if a schema (or its allOf sub-schemas) declares the discriminator
+-- property with an enum that contains the given value.
+local function branch_matches_discriminator_enum(branch, prop_name, value)
+    local function check_props(s)
+        local p = s.properties and s.properties[prop_name]
+        if p and p.enum then
+            for _, v in ipairs(p.enum) do
+                if v == value then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    if check_props(branch) then
+        return true
+    end
+
+    if branch.allOf then
+        for _, sub in ipairs(branch.allOf) do
+            if check_props(sub) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+
+-- Find the branch whose _ref matches the mapping target.
+local function find_branch_by_mapping(branches, mapping, value)
+    local target_ref = mapping[value]
+    if not target_ref then
+        return nil
+    end
+
+    for _, branch in ipairs(branches) do
+        if branch._ref == target_ref then
+            return branch
+        end
+        if branch.allOf then
+            for _, sub in ipairs(branch.allOf) do
+                if sub._ref == target_ref then
+                    return branch
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+
+-- Resolve an OpenAPI discriminator to select the correct oneOf/anyOf branch.
+-- Returns (selected_schema, nil) on success, or (nil, error_string) on failure.
+-- Returns (nil, nil) when the schema has no discriminator.
+local function resolve_discriminator(schema, body_data)
+    local disc = schema.discriminator
+    if not disc or not disc.propertyName then
+        return nil, nil
+    end
+
+    local prop_name = disc.propertyName
+    local branches = schema.oneOf or schema.anyOf
+    if not branches then
+        return nil, nil
+    end
+
+    if type(body_data) ~= "table" then
+        return nil, "discriminator property '" .. prop_name .. "' is missing"
+    end
+
+    local value = body_data[prop_name]
+    if value == nil then
+        return nil, "discriminator property '" .. prop_name .. "' is missing"
+    end
+
+    -- try mapping-based lookup first (uses _ref annotations from ref resolver)
+    if disc.mapping then
+        local branch = find_branch_by_mapping(branches, disc.mapping, value)
+        if branch then
+            return branch, nil
+        end
+    end
+
+    -- fallback: match by enum on the discriminator property
+    for _, branch in ipairs(branches) do
+        if branch_matches_discriminator_enum(branch, prop_name, value) then
+            return branch, nil
+        end
+    end
+
+    return nil, "discriminator value '" .. tostring(value)
+               .. "' does not match any schema"
+end
+
+
 -- Check for readOnly properties present in the request body data.
 local function check_readonly_properties(data, schema, errs)
     if type(data) ~= "table" or type(schema) ~= "table" then
@@ -297,7 +396,15 @@ function _M.validate(route, body_str, content_type, opts)
             check_readonly_properties(body_data, schema, errs)
         end
 
-        local validator = get_validator(schema)
+        local effective_schema = schema
+        local disc_schema, disc_err = resolve_discriminator(schema, body_data)
+        if disc_err then
+            tab_insert(errs, errors.new("body", nil, disc_err))
+        elseif disc_schema then
+            effective_schema = disc_schema
+        end
+
+        local validator = get_validator(effective_schema)
         if validator then
             local ok, err = validator(body_data)
             if not ok then

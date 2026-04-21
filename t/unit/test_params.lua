@@ -272,4 +272,24 @@ T.describe("params: deepObject anyOf rejects unmatched scalar", function()
     T.ok(errs and #errs >= 1, "error reported")
 end)
 
+-- Union type arrays from nullable normalization, e.g. type = {"object","null"},
+-- must still be recognised as an object branch.
+T.describe("params: deepObject anyOf nullable object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = { "object", "null" }, properties = {
+                  gt = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000" }, {})
+    T.ok(ok, "nullable object branch parsed")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
 T.done()

@@ -1,6 +1,9 @@
 -- Internal $ref resolution for OpenAPI specs.
 -- Resolves all $ref pointers within the same document, replacing them inline.
--- Supports circular references via a schema registry and lazy proxy.
+-- Uses in-place sharing: every $ref to the same pointer is replaced by the
+-- *same* Lua table, so resolution is O(spec size) regardless of how many
+-- times a schema is referenced. Cycles terminate naturally because each
+-- target is registered *before* its children are walked.
 
 local _M = {}
 
@@ -33,121 +36,95 @@ local function resolve_pointer(root, pointer)
 end
 
 
--- Deep copy a table, handling nested tables.
-local function deep_copy(orig, copies)
-    copies = copies or {}
-    if type(orig) ~= "table" then
-        return orig
-    end
-    if copies[orig] then
-        return copies[orig]
-    end
-    local copy = {}
-    copies[orig] = copy
-    for k, v in pairs(orig) do
-        copy[deep_copy(k, copies)] = deep_copy(v, copies)
-    end
-    return copy
-end
-
-
--- Walk the spec tree and resolve all $ref nodes.
--- Uses a registry to handle circular refs: each unique $ref target is
--- resolved once and stored; subsequent refs to the same target reuse it.
+-- Walk the spec tree and resolve every $ref node in place.
 --
--- For OAS 3.1, $ref can have sibling keywords. In that case we wrap in allOf:
---   { "$ref": "...", "maxLength": 5 }
---   -> { "allOf": [ resolved_target, { "maxLength": 5 } ] }
+-- Strategy:
+--   * `registry[ref]` maps a $ref string to its resolved Lua table. The first
+--     time we see a $ref we look up the target, register it BEFORE recursing
+--     into its children, then walk the target so any nested $refs inside it
+--     get replaced. All subsequent occurrences of the same $ref reuse the
+--     registered object. This keeps total work linear in the spec size.
+--   * `walked` tracks every table we have already walked (regardless of how
+--     we reached it). Without it the post-resolution graph contains cycles
+--     and direct descent into `components.schemas.*` would re-walk targets
+--     that were already resolved via $ref.
+--   * For OAS 3.1, $ref + sibling keys (e.g. {$ref: "...", maxLength: 5})
+--     are translated to {allOf: [resolved, siblings]}; siblings get walked
+--     too in case they contain $refs of their own. This wrapping never
+--     mutates the registered target, so sibling-bearing references stay
+--     local while plain references stay shared.
 function _M.resolve(spec)
     local registry = {}
-    local resolving = {}
+    local walked = {}
 
-    local function do_resolve(node, root, path)
-        if type(node) ~= "table" then
-            return node, nil
+    local walk
+
+    local function resolve_ref(ref)
+        local resolved = registry[ref]
+        if resolved then
+            return resolved
         end
-
-        local ref = node["$ref"]
-        if ref then
-            if type(ref) ~= "string" then
-                return nil, "invalid $ref type at " .. path
-            end
-            if sub_str(ref, 1, 1) ~= "#" then
-                return nil, "external $ref not supported: " .. ref .. " at " .. path
-            end
-
-            local pointer = sub_str(ref, 2)
-            if pointer == "" then
-                pointer = "/"
-            end
-
-            -- collect sibling keys (OAS 3.1 allows $ref + siblings)
-            local siblings = {}
-            local has_siblings = false
-            for k, v in pairs(node) do
-                if k ~= "$ref" then
-                    siblings[k] = v
-                    has_siblings = true
-                end
-            end
-
-            if registry[pointer] then
-                if has_siblings then
-                    return { allOf = { registry[pointer], siblings } }, nil
-                end
-                return registry[pointer], nil
-            end
-
-            -- cycle detection
-            if resolving[pointer] then
-                local placeholder = {}
-                registry[pointer] = placeholder
-                if has_siblings then
-                    return { allOf = { placeholder, siblings } }, nil
-                end
-                return placeholder, nil
-            end
-
-            resolving[pointer] = true
-
-            local target, err = resolve_pointer(root, pointer)
-            if not target then
-                return nil, "cannot resolve $ref '" .. ref .. "': " .. err
-            end
-
-            local resolved = deep_copy(target)
-
-            resolved, err = do_resolve(resolved, root, ref)
-            if err then
-                return nil, err
-            end
-
-            resolved._ref = ref
-            registry[pointer] = resolved
-            resolving[pointer] = nil
-
-            if has_siblings then
-                return { allOf = { resolved, siblings } }, nil
-            end
-            return resolved, nil
+        if sub_str(ref, 1, 1) ~= "#" then
+            error("external $ref not supported: " .. ref, 0)
         end
-
-        -- no $ref -- recurse into children
-        for k, v in pairs(node) do
-            if type(v) == "table" then
-                local resolved, err = do_resolve(v, root, path .. "/" .. k)
-                if err then
-                    return nil, err
-                end
-                node[k] = resolved
-            end
+        local pointer = sub_str(ref, 2)
+        if pointer == "" then
+            pointer = "/"
         end
-
-        return node, nil
+        local target, perr = resolve_pointer(spec, pointer)
+        if not target then
+            error("cannot resolve $ref '" .. ref .. "': " .. perr, 0)
+        end
+        -- register BEFORE walking, so cycles A -> B -> A terminate by
+        -- returning the in-progress target the second time we hit it.
+        registry[ref] = target
+        if type(target) == "table" then
+            target._ref = ref
+            walk(target)
+        end
+        return target
     end
 
-    local _, err = do_resolve(spec, spec, "#")
-    if err then
+    walk = function(node)
+        if type(node) ~= "table" or walked[node] then
+            return
+        end
+        walked[node] = true
+
+        for k, v in pairs(node) do
+            if type(v) == "table" then
+                local ref = v["$ref"]
+                if ref then
+                    if type(ref) ~= "string" then
+                        error("invalid $ref type", 0)
+                    end
+                    local resolved = resolve_ref(ref)
+
+                    -- collect sibling keys (OAS 3.1 allows $ref + siblings)
+                    local siblings, has_siblings
+                    for sk, sv in pairs(v) do
+                        if sk ~= "$ref" then
+                            siblings = siblings or {}
+                            siblings[sk] = sv
+                            has_siblings = true
+                        end
+                    end
+
+                    if has_siblings then
+                        walk(siblings)
+                        node[k] = { allOf = { resolved, siblings } }
+                    else
+                        node[k] = resolved
+                    end
+                else
+                    walk(v)
+                end
+            end
+        end
+    end
+
+    local ok, err = pcall(walk, spec)
+    if not ok then
         return false, err
     end
 

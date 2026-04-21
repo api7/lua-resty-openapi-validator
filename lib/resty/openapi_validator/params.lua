@@ -255,6 +255,37 @@ local function deserialize_param(raw_value, param, query_args)
 
     local stype = schema.type
 
+    -- deepObject style with anyOf/oneOf: try the object branch via parse_deep_object;
+    -- if no param[...] keys are present, try a scalar branch against the bare param value.
+    if style == "deepObject" and stype ~= "object"
+       and (schema.anyOf or schema.oneOf) then
+        local branches = schema.anyOf or schema.oneOf
+        for _, branch in ipairs(branches) do
+            if branch.type == "object" then
+                local obj = parse_deep_object(param.name, query_args or {}, branch)
+                if obj ~= nil then
+                    return obj
+                end
+            end
+        end
+        local scalar_raw = (query_args or {})[param.name]
+        if scalar_raw ~= nil then
+            if type(scalar_raw) == "table" then
+                scalar_raw = scalar_raw[1]
+            end
+            for _, branch in ipairs(branches) do
+                if branch.type and branch.type ~= "object" then
+                    local v = coerce_value(scalar_raw, branch)
+                    if v ~= nil then
+                        return v
+                    end
+                end
+            end
+            return scalar_raw
+        end
+        return nil
+    end
+
     if stype == "array" then
         local items_schema = schema.items or {}
         local values

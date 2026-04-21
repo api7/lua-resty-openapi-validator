@@ -162,4 +162,61 @@ T.describe("params: error format", function()
     T.like(formatted, "path parameter 'id'", "format includes path param")
 end)
 
+-- Test: deepObject query param with anyOf {object, integer} schema.
+-- Common in real-world specs (e.g. Stripe range_query_specs: created, etc.)
+-- where a filter accepts either a Unix timestamp or {gt, gte, lt, lte} object.
+T.describe("params: deepObject anyOf optional missing", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, gte = { type = "integer" },
+                  lt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route, {}, {}, {})
+    T.ok(ok, "missing optional deepObject anyOf accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject anyOf object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" }, lte = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "1700000000", ["created[lte]"] = "1800000000" }, {})
+    T.ok(ok, "deepObject object form accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: deepObject anyOf integer branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { type = "object", properties = {
+                  gt = { type = "integer" },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created"] = "1700000000" }, {})
+    T.ok(ok, "deepObject scalar (integer branch) accepted")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
 T.done()

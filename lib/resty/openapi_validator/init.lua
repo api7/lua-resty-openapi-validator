@@ -106,9 +106,19 @@ function _VMT.validate_request(self, req, skip)
 
     -- 3. Body validation
     if not skip.body then
+        -- build options for body validation
+        local body_opts = {}
+        if skip.readOnly ~= nil then
+            body_opts.exclude_readonly = skip.readOnly
+        end
+        if skip.writeOnly ~= nil then
+            body_opts.exclude_writeonly = skip.writeOnly
+        end
+
         local body_ok, body_errs = body_mod.validate(
             route, req.body,
-            req.content_type or (req.headers and req.headers["content-type"])
+            req.content_type or (req.headers and req.headers["content-type"]),
+            body_opts
         )
         if not body_ok and body_errs then
             for _, e in ipairs(body_errs) do

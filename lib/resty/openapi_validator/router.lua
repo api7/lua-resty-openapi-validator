@@ -62,29 +62,37 @@ local function collect_params(path_item, operation)
     return by_loc
 end
 
---- Find request body schema, preferring application/json.
-local function find_body_schema(operation)
+--- Find request body schema and content map.
+local function find_body_info(operation)
     if not operation.requestBody then
-        return nil, false
+        return nil, nil, false
     end
     local body_required = operation.requestBody.required or false
     local content = operation.requestBody.content
     if not content then
-        return nil, body_required
+        return nil, nil, body_required
     end
 
+    -- find the primary schema (prefer JSON)
+    local primary_schema
     if content["application/json"] then
-        return content["application/json"].schema, body_required
-    end
-    for ct, media in pairs(content) do
-        if ct == "*/*" or find(ct, "json") then
-            return media.schema, body_required
+        primary_schema = content["application/json"].schema
+    else
+        for ct, media in pairs(content) do
+            if ct == "*/*" or find(ct, "json") then
+                primary_schema = media.schema
+                break
+            end
+        end
+        if not primary_schema then
+            for _, media in pairs(content) do
+                primary_schema = media.schema
+                break
+            end
         end
     end
-    for _, media in pairs(content) do
-        return media.schema, body_required
-    end
-    return nil, body_required
+
+    return primary_schema, content, body_required
 end
 
 --- Build a router from a compiled OpenAPI spec.
@@ -111,7 +119,7 @@ function _M.new(spec)
                 local id = tostring(route_id)
 
                 local params = collect_params(path_item, operation)
-                local body_schema, body_required = find_body_schema(operation)
+                local body_schema, body_content, body_required = find_body_info(operation)
 
                 route_metadata[id] = {
                     path_template = path_template,
@@ -120,6 +128,7 @@ function _M.new(spec)
                     operation = operation,
                     params = params,
                     body_schema = body_schema,
+                    body_content = body_content,
                     body_required = body_required,
                 }
 

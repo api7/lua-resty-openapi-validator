@@ -2,23 +2,19 @@
 
 RESTY := /usr/local/openresty/bin/resty --shdict "test 1m"
 
+UNIT_TESTS := $(sort $(wildcard t/unit/test_*.lua))
+CONFORMANCE_TESTS := $(sort $(wildcard t/conformance/test_*.lua))
+
 test: test-unit test-conformance
 	@echo "All tests passed."
 
 test-unit:
 	@echo "=== Unit tests ==="
-	@$(RESTY) -e 'dofile("t/unit/test_loader.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_refs.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_normalize.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_compile.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_router.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_params.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_body.lua")'
-	@$(RESTY) -e 'dofile("t/unit/test_e2e.lua")'
+	@for f in $(UNIT_TESTS); do $(RESTY) -e "dofile('$$f')" || exit 1; done
 
 test-conformance:
 	@echo "=== Conformance tests ==="
-	@$(RESTY) -e 'dofile("t/conformance/test_kin_openapi.lua")'
+	@for f in $(CONFORMANCE_TESTS); do $(RESTY) -e "dofile('$$f')" || exit 1; done
 
 benchmark:
 	@$(RESTY) -e 'dofile("benchmark/bench.lua")'

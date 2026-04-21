@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    env:
+      OPENRESTY_PREFIX: "/usr/local/openresty"
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev libreadline-dev libssl-dev perl lua5.1 liblua5.1-0-dev
+
+      - name: Install OpenResty
+        run: |
+          wget -qO - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y openresty
+
+      - name: Install LuaRocks
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/apache/apisix/master/utils/linux-install-luarocks.sh | sh
+
+      - name: Install Lua dependencies
+        run: |
+          sudo luarocks install jsonschema
+          sudo luarocks install lua-resty-radixtree
+
+      - name: Run tests
+        run: |
+          export PATH=$OPENRESTY_PREFIX/nginx/sbin:$OPENRESTY_PREFIX/bin:$PATH
+          make test

@@ -54,7 +54,7 @@ T.describe("issue689: non read-only property, validation disabled (valid)", func
         body = '{"testNoReadOnly": true}',
         content_type = "application/json",
         headers = { ["content-type"] = "application/json" },
-    }, { readOnly = true })
+    }, { read_only = true })
     T.ok(ok, "should pass: " .. tostring(err))
 end)
 
@@ -77,7 +77,7 @@ T.describe("issue689: read-only property, validation disabled (valid)", function
         body = '{"testWithReadOnly": true}',
         content_type = "application/json",
         headers = { ["content-type"] = "application/json" },
-    }, { readOnly = true })
+    }, { read_only = true })
     T.ok(ok, "should pass: " .. tostring(err))
 end)
 

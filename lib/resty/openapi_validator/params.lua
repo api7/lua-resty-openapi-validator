@@ -263,14 +263,7 @@ local function deserialize_param(raw_value, param, query_args)
        and (schema.anyOf or schema.oneOf) then
         local branches = schema.anyOf or schema.oneOf
         local function branch_has_object(b)
-            local bt = b and b.type
-            if bt == "object" then return true end
-            if type(bt) == "table" then
-                for _, t in ipairs(bt) do
-                    if t == "object" then return true end
-                end
-            end
-            return false
+            return collect_types(b)["object"] == true
         end
         for _, branch in ipairs(branches) do
             if branch_has_object(branch) then

@@ -292,4 +292,27 @@ T.describe("params: deepObject anyOf nullable object branch", function()
     T.ok(not errs or #errs == 0, "no errors")
 end)
 
+-- Object branch expressed via composition (allOf) must also be detected, so
+-- parse_deep_object is invoked and the value reaches the union validator
+-- (instead of being dropped or coerced as a scalar).
+T.describe("params: deepObject anyOf composed (allOf) object branch", function()
+    local route = make_route({
+        { name = "created", ["in"] = "query", required = false,
+          style = "deepObject", explode = true,
+          schema = { anyOf = {
+              { allOf = {
+                  { type = "object", properties = {
+                      gt = { type = "string" },
+                  } },
+              } },
+              { type = "integer" },
+          } } },
+    }, "query")
+
+    local ok, errs = params_mod.validate(route,
+        {}, { ["created[gt]"] = "abc" }, {})
+    T.ok(ok, "composed object branch parsed")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
 T.done()

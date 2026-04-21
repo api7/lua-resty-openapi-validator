@@ -1,0 +1,42 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Header Validation API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/validateHeaders": {
+      "get": {
+        "summary": "Endpoint to validate headers",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^Bearer [A-Za-z0-9-_=]+\\.[A-Za-z0-9-_=]+\\.[A-Za-z0-9-_.+/=]*$"
+            }
+          },
+          {
+            "name": "Content-Type",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^application/json$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Valid headers"
+          },
+          "400": {
+            "description": "Invalid headers"
+          }
+        }
+      }
+    }
+  }
+}

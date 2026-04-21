@@ -1,6 +1,6 @@
 #!/usr/bin/env luajit
 --- Integration test for the compile entry point
-package.path = "lib/?.lua;lib/?/init.lua;t/lib/?.lua;;" .. package.path
+dofile("t/lib/test_bootstrap.lua")
 
 local T = require("test_helper")
 

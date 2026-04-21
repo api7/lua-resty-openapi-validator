@@ -29,21 +29,23 @@ local function normalize_30_schema(schema, warnings)
     if schema.nullable == true then
         schema.nullable = nil
 
-        if schema.enum then
-            -- add null to enum if not already present
-            local has_null = false
-            for _, v in ipairs(schema.enum) do
-                if v == nil or v == require("cjson").null then
-                    has_null = true
-                    break
+        -- For nullable schemas with enum or const, we cannot simply inject
+        -- cjson.null into enum (jsonschema can't handle userdata in enum).
+        -- Use anyOf: [original_schema_without_nullable, {type: "null"}]
+        if schema.enum or schema["const"] then
+            -- save and remove nullable-related fields, wrap in anyOf
+            local original = {}
+            for k, v in pairs(schema) do
+                if k ~= "nullable" then
+                    original[k] = v
                 end
             end
-            if not has_null then
-                insert(schema.enum, require("cjson").null)
+            -- clear schema and replace with anyOf
+            for k in pairs(schema) do
+                schema[k] = nil
             end
-        end
-
-        if schema.type then
+            schema.anyOf = { original, { type = "null" } }
+        elseif schema.type then
             if type(schema.type) == "string" then
                 schema.type = { schema.type, "null" }
             elseif type(schema.type) == "table" then
@@ -58,10 +60,6 @@ local function normalize_30_schema(schema, warnings)
                     insert(schema.type, "null")
                 end
             end
-        else
-            -- no type specified, use anyOf pattern
-            -- wrap original schema + null type
-            -- This is a complex case; for safety, just add type null
         end
     end
 

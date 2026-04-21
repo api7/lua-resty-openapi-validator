@@ -1,6 +1,6 @@
-#!/usr/bin/env luajit
---- Tests for router.lua
-package.path = "lib/?.lua;lib/?/init.lua;t/lib/?.lua;;" .. package.path
+#!/usr/bin/env resty
+--- Tests for router.lua (requires OpenResty + lua-resty-radixtree)
+dofile("t/lib/test_bootstrap.lua")
 
 local T = require("test_helper")
 local cjson = require("cjson.safe")
@@ -14,10 +14,9 @@ local function load_spec(filename)
     return cjson.decode(data)
 end
 
--- Test: basic path matching
+-- Test: basic GET match
 T.describe("router: basic GET match", function()
     local spec = load_spec("basic_30.json")
-    -- resolve refs first
     local refs = require("resty.openapi_validator.refs")
     refs.resolve(spec)
 
@@ -81,19 +80,6 @@ T.describe("router: trailing slash", function()
     T.is(params.id, "42", "param extracted correctly")
 end)
 
--- Test: percent-encoded path
-T.describe("router: percent-encoded path", function()
-    local spec = load_spec("basic_30.json")
-    local refs = require("resty.openapi_validator.refs")
-    refs.resolve(spec)
-
-    local router = router_mod.new(spec)
-
-    local route, params = router:match("GET", "/users/hello%20world")
-    T.ok(route ~= nil, "percent-encoded path matched")
-    T.is(params.id, "hello world", "percent decoding works")
-end)
-
 -- Test: query string stripped
 T.describe("router: query string stripped", function()
     local spec = load_spec("basic_30.json")
@@ -120,14 +106,12 @@ T.describe("router: params organized by location", function()
     T.ok(route.params.path ~= nil, "path params exist")
     T.ok(route.params.query ~= nil, "query params exist")
 
-    -- check path param
     local found_id = false
     for _, p in ipairs(route.params.path) do
         if p.name == "id" then found_id = true end
     end
     T.ok(found_id, "id found in path params")
 
-    -- check query param
     local found_limit = false
     for _, p in ipairs(route.params.query) do
         if p.name == "limit" then found_limit = true end

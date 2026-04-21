@@ -1,6 +1,6 @@
 #!/usr/bin/env luajit
 --- Tests for normalize.lua
-package.path = "lib/?.lua;lib/?/init.lua;t/lib/?.lua;;" .. package.path
+dofile("t/lib/test_bootstrap.lua")
 
 local T = require("test_helper")
 local cjson = require("cjson.safe")
@@ -31,7 +31,7 @@ T.describe("normalize 3.0: nullable string", function()
     T.ok(has_null, "type array contains null")
 end)
 
--- Test: 3.0 nullable + enum → null added to enum
+-- Test: 3.0 nullable + enum → anyOf pattern
 T.describe("normalize 3.0: nullable enum", function()
     local schema = {
         type = "string",
@@ -43,12 +43,10 @@ T.describe("normalize 3.0: nullable enum", function()
         "3.0", { strict = false }
     )
     T.ok(schema.nullable == nil, "nullable removed")
-    -- enum should contain cjson.null
-    local has_null_token = false
-    for _, v in ipairs(schema.enum) do
-        if v == cjson.null then has_null_token = true end
-    end
-    T.ok(has_null_token, "null added to enum")
+    -- should be wrapped in anyOf instead of injecting null into enum
+    T.ok(schema.anyOf ~= nil, "wrapped in anyOf")
+    T.is(#schema.anyOf, 2, "anyOf has 2 elements")
+    T.is(schema.anyOf[2].type, "null", "second element is null type")
 end)
 
 -- Test: 3.0 exclusiveMinimum boolean → numeric

@@ -1,9 +1,11 @@
 --- Router: maps incoming (method, path) to OpenAPI operations.
--- Converts OpenAPI path templates ({param}) to match patterns,
--- indexes by method, extracts path parameters.
+-- Uses lua-resty-radixtree for high-performance path matching.
+-- Converts OpenAPI path templates ({param}) to radixtree :param syntax.
 
 local _M = {}
 local _MT = { __index = _M }
+
+local radixtree = require("resty.radixtree")
 
 local type = type
 local pairs = pairs
@@ -12,129 +14,142 @@ local insert = table.insert
 local find = string.find
 local sub = string.sub
 local gsub = string.gsub
-local match = string.match
 local byte = string.byte
 
 local SLASH = byte("/")
 
---- Convert OpenAPI path template to a Lua pattern + param name list.
--- e.g. "/users/{id}/posts/{postId}" → "^/users/([^/]+)/posts/([^/]+)$", {"id", "postId"}
-local function compile_path(path_template)
-    local params = {}
-    -- Escape Lua pattern special chars except { }
-    local pattern = gsub(path_template, "([%.%+%-%*%?%[%]%^%$%(%)%%])", "%%%1")
-    -- Replace {param} with capture group
-    pattern = gsub(pattern, "{([^}]+)}", function(name)
-        insert(params, name)
-        return "([^/]+)"
-    end)
-    return "^" .. pattern .. "$", params
+local HTTP_METHODS = {
+    GET = true, POST = true, PUT = true, DELETE = true,
+    PATCH = true, HEAD = true, OPTIONS = true, TRACE = true,
+}
+
+--- Convert OpenAPI path template to radixtree format.
+-- e.g. "/users/{id}/posts/{postId}" → "/users/:id/posts/:postId"
+local function convert_path(path_template)
+    return (gsub(path_template, "{([^}]+)}", ":_%1"))
 end
 
---- Percent-decode a URL segment.
-local function percent_decode(s)
-    return gsub(s, "%%(%x%x)", function(hex)
-        return string.char(tonumber(hex, 16))
-    end)
+--- Extract param names from {param} in path template.
+local function extract_param_names(path_template)
+    local names = {}
+    for name in path_template:gmatch("{([^}]+)}") do
+        insert(names, name)
+    end
+    return names
+end
+
+--- Collect and organize parameters for an operation.
+local function collect_params(path_item, operation)
+    local all_params = {}
+    if path_item.parameters then
+        for _, p in ipairs(path_item.parameters) do
+            all_params[p.name .. ":" .. p["in"]] = p
+        end
+    end
+    if operation.parameters then
+        for _, p in ipairs(operation.parameters) do
+            all_params[p.name .. ":" .. p["in"]] = p
+        end
+    end
+
+    local by_loc = { path = {}, query = {}, header = {} }
+    for _, p in pairs(all_params) do
+        local loc = p["in"]
+        if by_loc[loc] then
+            insert(by_loc[loc], p)
+        end
+    end
+    return by_loc
+end
+
+--- Find request body schema, preferring application/json.
+local function find_body_schema(operation)
+    if not operation.requestBody then
+        return nil, false
+    end
+    local body_required = operation.requestBody.required or false
+    local content = operation.requestBody.content
+    if not content then
+        return nil, body_required
+    end
+
+    if content["application/json"] then
+        return content["application/json"].schema, body_required
+    end
+    for ct, media in pairs(content) do
+        if ct == "*/*" or find(ct, "json") then
+            return media.schema, body_required
+        end
+    end
+    for _, media in pairs(content) do
+        return media.schema, body_required
+    end
+    return nil, body_required
 end
 
 --- Build a router from a compiled OpenAPI spec.
 -- @param spec table  the parsed+normalized spec (with paths)
 -- @return table  router object
 function _M.new(spec)
-    local routes = {}
+    local radix_routes = {}
+    local route_metadata = {} -- id → route detail
 
     local paths = spec.paths
     if not paths then
-        return setmetatable({ routes = routes }, _MT)
+        return setmetatable({ rx = nil, metadata = route_metadata }, _MT)
     end
 
+    local route_id = 0
     for path_template, path_item in pairs(paths) do
-        local pattern, param_names = compile_path(path_template)
+        local radix_path = convert_path(path_template)
+        local param_names = extract_param_names(path_template)
 
         for method, operation in pairs(path_item) do
-            -- skip non-operation keys (parameters, summary, etc.)
             local m = method:upper()
-            if m == "GET" or m == "POST" or m == "PUT" or m == "DELETE"
-               or m == "PATCH" or m == "HEAD" or m == "OPTIONS"
-               or m == "TRACE" then
+            if HTTP_METHODS[m] then
+                route_id = route_id + 1
+                local id = tostring(route_id)
 
-                -- collect parameters from path-level and operation-level
-                local all_params = {}
-                if path_item.parameters then
-                    for _, p in ipairs(path_item.parameters) do
-                        all_params[p.name .. ":" .. p["in"]] = p
-                    end
-                end
-                if operation.parameters then
-                    for _, p in ipairs(operation.parameters) do
-                        all_params[p.name .. ":" .. p["in"]] = p
-                    end
-                end
+                local params = collect_params(path_item, operation)
+                local body_schema, body_required = find_body_schema(operation)
 
-                -- organize params by location
-                local params_by_loc = {
-                    path = {},
-                    query = {},
-                    header = {},
-                }
-                for _, p in pairs(all_params) do
-                    local loc = p["in"]
-                    if params_by_loc[loc] then
-                        insert(params_by_loc[loc], p)
-                    end
-                end
-
-                -- find request body schema (prefer application/json)
-                local body_schema, body_required
-                if operation.requestBody then
-                    body_required = operation.requestBody.required
-                    local content = operation.requestBody.content
-                    if content then
-                        if content["application/json"] then
-                            body_schema = content["application/json"].schema
-                        else
-                            -- try wildcard or first available
-                            for ct, media in pairs(content) do
-                                if ct == "*/*" or find(ct, "json") then
-                                    body_schema = media.schema
-                                    break
-                                end
-                            end
-                            if not body_schema then
-                                -- take first content type
-                                for _, media in pairs(content) do
-                                    body_schema = media.schema
-                                    break
-                                end
-                            end
-                        end
-                    end
-                end
-
-                insert(routes, {
+                route_metadata[id] = {
                     path_template = path_template,
-                    pattern = pattern,
                     param_names = param_names,
                     method = m,
                     operation = operation,
-                    params = params_by_loc,
+                    params = params,
                     body_schema = body_schema,
-                    body_required = body_required or false,
+                    body_required = body_required,
+                }
+
+                insert(radix_routes, {
+                    paths = { radix_path },
+                    methods = { m },
+                    metadata = id,
                 })
             end
         end
     end
 
-    return setmetatable({ routes = routes }, _MT)
+    if #radix_routes == 0 then
+        return setmetatable({ rx = nil, metadata = route_metadata }, _MT)
+    end
+
+    local rx = radixtree.new(radix_routes)
+    return setmetatable({ rx = rx, metadata = route_metadata }, _MT)
 end
 
 --- Match an incoming request to a route.
 -- @param method string  HTTP method (uppercase)
 -- @param path string    request URI path (without query string)
--- @return table|nil  matched route
+-- @return table|nil  matched route (with params, body_schema, etc.)
 -- @return table|nil  extracted path parameters { name = value }
 function _M.match(self, method, path)
+    if not self.rx then
+        return nil, nil
+    end
+
     method = method:upper()
 
     -- strip query string if present
@@ -148,30 +163,30 @@ function _M.match(self, method, path)
         path = sub(path, 1, #path - 1)
     end
 
-    -- percent-decode the path
-    path = percent_decode(path)
+    local matched = {}
+    local opts = {
+        method = method,
+        matched = matched,
+    }
 
-    for _, route in ipairs(self.routes) do
-        if route.method == method then
-            local captures = { match(path, route.pattern) }
-            if #captures > 0 or (path == route.path_template and #route.param_names == 0) then
-                -- for paths without params, check exact match
-                if #route.param_names == 0 then
-                    if path:match(route.pattern) then
-                        return route, {}
-                    end
-                else
-                    local path_params = {}
-                    for i, name in ipairs(route.param_names) do
-                        path_params[name] = captures[i]
-                    end
-                    return route, path_params
-                end
-            end
-        end
+    local id = self.rx:match(path, opts)
+    if not id then
+        return nil, nil
     end
 
-    return nil, nil
+    local route = self.metadata[id]
+    if not route then
+        return nil, nil
+    end
+
+    -- extract path params from radixtree matched table
+    -- radixtree stores them with "_" prefix since we use :_paramName
+    local path_params = {}
+    for _, name in ipairs(route.param_names) do
+        path_params[name] = matched["_" .. name]
+    end
+
+    return route, path_params
 end
 
 return _M

@@ -59,8 +59,8 @@ Validates an incoming HTTP request against the compiled OpenAPI spec. Returns
   - `query`: boolean — skip query parameter validation
   - `header`: boolean — skip header validation
   - `body`: boolean — skip request body validation
-  - `readOnly`: boolean — skip readOnly property checks in request body
-  - `writeOnly`: boolean — skip writeOnly property checks
+  - `read_only`: boolean — skip readOnly property checks in request body
+  - `write_only`: boolean — skip writeOnly property checks
 
 ```lua
 local ok, err = validator:validate_request({
@@ -83,8 +83,8 @@ Skip specific validation:
 
 ```lua
 local ok, err = validator:validate_request(req, {
-    body     = true,  -- skip body validation
-    readOnly = true,  -- skip readOnly checks
+    body      = true,  -- skip body validation
+    read_only = true,  -- skip readOnly checks
 })
 ```
 

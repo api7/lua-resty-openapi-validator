@@ -87,11 +87,11 @@ function _validator_mt.validate_request(self, req, skip)
 
     if not skip.body then
         local body_opts = {}
-        if skip.readOnly ~= nil then
-            body_opts.exclude_readonly = skip.readOnly
+        if skip.read_only ~= nil then
+            body_opts.exclude_readonly = skip.read_only
         end
-        if skip.writeOnly ~= nil then
-            body_opts.exclude_writeonly = skip.writeOnly
+        if skip.write_only ~= nil then
+            body_opts.exclude_writeonly = skip.write_only
         end
 
         local body_ok, body_errs = body_mod.validate(

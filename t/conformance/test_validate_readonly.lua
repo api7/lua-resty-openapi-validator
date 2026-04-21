@@ -60,7 +60,7 @@ end)
 
 T.describe("readOnly in request with skip.readOnly: should pass", function()
     local v = ov.compile(make_spec("readOnly"))
-    local ok, err = v:validate_request(req, { readOnly = true })
+    local ok, err = v:validate_request(req, { read_only = true })
     T.ok(ok, "readOnly skipped, should pass: " .. tostring(err))
 end)
 

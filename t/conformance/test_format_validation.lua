@@ -1,6 +1,6 @@
 #!/usr/bin/env resty
 --- Conformance tests for format keyword validation.
--- Covers uuid, date, date-time, uri, email, ipv4, ipv6, hostname formats.
+-- Covers uuid, date, date-time, uri, email, ipv4, hostname formats.
 -- Each format has positive and negative cases.
 dofile("t/lib/test_bootstrap.lua")
 
@@ -44,9 +44,7 @@ end
 local function validate_format(format_name, value)
     local spec = make_format_spec(format_name)
     local v, err = ov.compile(spec)
-    if not v then
-        return nil, "compile failed: " .. tostring(err)
-    end
+    assert(v, "compile failed for format '" .. format_name .. "': " .. tostring(err))
     return v:validate_request({
         method = "POST",
         path = "/test",

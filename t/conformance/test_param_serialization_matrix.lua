@@ -9,10 +9,11 @@ local ov   = require("resty.openapi_validator")
 
 
 local function make_spec(param_def, location)
+    local param = cjson.decode(cjson.encode(param_def))
     local path_template
     if location == "path" then
-        path_template = "/test/{" .. param_def.name .. "}"
-        param_def.required = true
+        path_template = "/test/{" .. param.name .. "}"
+        param.required = true
     else
         path_template = "/test"
     end
@@ -23,7 +24,7 @@ local function make_spec(param_def, location)
         paths = {
             [path_template] = {
                 get = {
-                    parameters = { param_def },
+                    parameters = { param },
                     responses = { ["200"] = { description = "OK" } },
                 },
             },

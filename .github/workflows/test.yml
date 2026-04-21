@@ -34,7 +34,7 @@ jobs:
 
       - name: Install Lua dependencies
         run: |
-          sudo luarocks install jsonschema 0.9.10
+          sudo luarocks install jsonschema
           sudo luarocks install lua-resty-radixtree
 
       - name: Run tests

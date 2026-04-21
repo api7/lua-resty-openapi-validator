@@ -1,31 +1,25 @@
---- Internal $ref resolution for OpenAPI specs.
+-- Internal $ref resolution for OpenAPI specs.
 -- Resolves all $ref pointers within the same document, replacing them inline.
--- Supports circular references via a schema registry + lazy proxy.
+-- Supports circular references via a schema registry and lazy proxy.
 
 local _M = {}
 
-local type = type
-local pairs = pairs
-local ipairs = ipairs
-local sub = string.sub
-local gsub = string.gsub
-local find = string.find
+local type       = type
+local pairs      = pairs
+local sub_str    = string.sub
+local str_gsub   = string.gsub
+local str_gmatch = string.gmatch
 
---- Resolve a JSON Pointer (RFC 6901) against a root document.
--- @param root table   the root spec
--- @param pointer string  e.g. "/components/schemas/Pet"
--- @return any|nil  resolved value
--- @return string|nil  error
+
+-- Resolve a JSON Pointer (RFC 6901) against a root document.
 local function resolve_pointer(root, pointer)
     local current = root
-    -- split by "/" and unescape ~ sequences
-    for token in pointer:gmatch("[^/]+") do
-        token = gsub(token, "~1", "/")
-        token = gsub(token, "~0", "~")
+    for token in str_gmatch(pointer, "[^/]+") do
+        token = str_gsub(token, "~1", "/")
+        token = str_gsub(token, "~0", "~")
         if type(current) ~= "table" then
             return nil, "cannot traverse non-table at '" .. token .. "'"
         end
-        -- try numeric index (1-based) for arrays
         local num = tonumber(token)
         if num and current[num + 1] ~= nil then
             current = current[num + 1]
@@ -38,7 +32,8 @@ local function resolve_pointer(root, pointer)
     return current, nil
 end
 
---- Deep copy a table, handling nested tables.
+
+-- Deep copy a table, handling nested tables.
 local function deep_copy(orig, copies)
     copies = copies or {}
     if type(orig) ~= "table" then
@@ -55,20 +50,17 @@ local function deep_copy(orig, copies)
     return copy
 end
 
---- Walk the spec tree and resolve all $ref nodes.
+
+-- Walk the spec tree and resolve all $ref nodes.
 -- Uses a registry to handle circular refs: each unique $ref target is
 -- resolved once and stored; subsequent refs to the same target reuse it.
 --
 -- For OAS 3.1, $ref can have sibling keywords. In that case we wrap in allOf:
 --   { "$ref": "...", "maxLength": 5 }
---   → { "allOf": [ resolved_target, { "maxLength": 5 } ] }
---
--- @param spec table  the root OpenAPI spec (mutated in place)
--- @return boolean
--- @return string|nil error
+--   -> { "allOf": [ resolved_target, { "maxLength": 5 } ] }
 function _M.resolve(spec)
-    local registry = {}  -- pointer → resolved table
-    local resolving = {} -- pointer → true (cycle detection during first resolution)
+    local registry = {}
+    local resolving = {}
 
     local function do_resolve(node, root, path)
         if type(node) ~= "table" then
@@ -77,15 +69,14 @@ function _M.resolve(spec)
 
         local ref = node["$ref"]
         if ref then
-            -- reject external refs
             if type(ref) ~= "string" then
                 return nil, "invalid $ref type at " .. path
             end
-            if sub(ref, 1, 1) ~= "#" then
+            if sub_str(ref, 1, 1) ~= "#" then
                 return nil, "external $ref not supported: " .. ref .. " at " .. path
             end
 
-            local pointer = sub(ref, 2) -- strip leading "#"
+            local pointer = sub_str(ref, 2)
             if pointer == "" then
                 pointer = "/"
             end
@@ -100,7 +91,6 @@ function _M.resolve(spec)
                 end
             end
 
-            -- check registry first
             if registry[pointer] then
                 if has_siblings then
                     return { allOf = { registry[pointer], siblings } }, nil
@@ -110,9 +100,6 @@ function _M.resolve(spec)
 
             -- cycle detection
             if resolving[pointer] then
-                -- circular ref: create a placeholder that will be filled in
-                -- For now, we store an empty table as placeholder and let
-                -- the caller handle recursion at validation time.
                 local placeholder = {}
                 registry[pointer] = placeholder
                 if has_siblings then
@@ -123,16 +110,13 @@ function _M.resolve(spec)
 
             resolving[pointer] = true
 
-            -- resolve the pointer
             local target, err = resolve_pointer(root, pointer)
             if not target then
                 return nil, "cannot resolve $ref '" .. ref .. "': " .. err
             end
 
-            -- deep copy to avoid mutation of shared nodes
             local resolved = deep_copy(target)
 
-            -- recursively resolve refs within the resolved target
             resolved, err = do_resolve(resolved, root, ref)
             if err then
                 return nil, err
@@ -147,7 +131,7 @@ function _M.resolve(spec)
             return resolved, nil
         end
 
-        -- no $ref — recurse into children
+        -- no $ref -- recurse into children
         for k, v in pairs(node) do
             if type(v) == "table" then
                 local resolved, err = do_resolve(v, root, path .. "/" .. k)

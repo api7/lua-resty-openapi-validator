@@ -1,14 +1,13 @@
---- Schema normalization: convert OpenAPI 3.0/3.1 schemas to JSON Schema Draft 7.
+-- Schema normalization: convert OpenAPI 3.0/3.1 schemas to JSON Schema Draft 7.
 -- This module walks all schema objects in a parsed OpenAPI spec and transforms
 -- them so that api7/jsonschema (Draft 4/6/7) can validate them.
 
 local _M = {}
 
-local type = type
-local pairs = pairs
-local ipairs = ipairs
-local insert = table.insert
-local remove = table.remove
+local type       = type
+local pairs      = pairs
+local ipairs     = ipairs
+local tab_insert = table.insert
 
 -- Keywords that are Draft 2020-12 only and have no Draft 7 equivalent
 local UNSUPPORTED_31_KEYWORDS = {
@@ -18,7 +17,7 @@ local UNSUPPORTED_31_KEYWORDS = {
     ["unevaluatedItems"] = true,
 }
 
---- Normalize a single schema node (3.0 → Draft 7).
+-- Normalize a single schema node (3.0 → Draft 7).
 local function normalize_30_schema(schema, warnings)
     if type(schema) ~= "table" then
         return
@@ -57,7 +56,7 @@ local function normalize_30_schema(schema, warnings)
                     end
                 end
                 if not has_null then
-                    insert(schema.type, "null")
+                    tab_insert(schema.type, "null")
                 end
             end
         end
@@ -71,7 +70,7 @@ local function normalize_30_schema(schema, warnings)
         else
             -- exclusiveMinimum: true without minimum is invalid, remove it
             schema.exclusiveMinimum = nil
-            insert(warnings, "exclusiveMinimum: true without minimum, ignored")
+            tab_insert(warnings, "exclusiveMinimum: true without minimum, ignored")
         end
     elseif schema.exclusiveMinimum == false then
         schema.exclusiveMinimum = nil
@@ -84,7 +83,7 @@ local function normalize_30_schema(schema, warnings)
             schema.maximum = nil
         else
             schema.exclusiveMaximum = nil
-            insert(warnings, "exclusiveMaximum: true without maximum, ignored")
+            tab_insert(warnings, "exclusiveMaximum: true without maximum, ignored")
         end
     elseif schema.exclusiveMaximum == false then
         schema.exclusiveMaximum = nil
@@ -94,7 +93,7 @@ local function normalize_30_schema(schema, warnings)
     schema.example = nil
 end
 
---- Normalize a single schema node (3.1 → Draft 7).
+-- Normalize a single schema node (3.1 → Draft 7).
 local function normalize_31_schema(schema, warnings, strict)
     if type(schema) ~= "table" then
         return nil
@@ -106,7 +105,7 @@ local function normalize_31_schema(schema, warnings, strict)
             if strict then
                 return "unsupported OpenAPI 3.1 keyword: " .. kw
             end
-            insert(warnings, "unsupported keyword ignored: " .. kw)
+            tab_insert(warnings, "unsupported keyword ignored: " .. kw)
             schema[kw] = nil
         end
     end
@@ -151,7 +150,7 @@ local function normalize_31_schema(schema, warnings, strict)
         if strict then
             return "unsupported keyword: minContains/maxContains"
         end
-        insert(warnings, "minContains/maxContains ignored (no Draft 7 equivalent)")
+        tab_insert(warnings, "minContains/maxContains ignored (no Draft 7 equivalent)")
         schema.minContains = nil
         schema.maxContains = nil
     end
@@ -173,7 +172,7 @@ local function normalize_31_schema(schema, warnings, strict)
     return nil
 end
 
---- Recursively walk all schema-like objects in the spec and normalize them.
+-- Recursively walk all schema-like objects in the spec and normalize them.
 local function walk_and_normalize(node, version, warnings, strict, visited)
     if type(node) ~= "table" then
         return nil
@@ -202,7 +201,7 @@ local function walk_and_normalize(node, version, warnings, strict, visited)
     end
 
     -- Recurse into all sub-tables
-    for k, v in pairs(node) do
+    for _, v in pairs(node) do
         if type(v) == "table" then
             local err = walk_and_normalize(v, version, warnings, strict, visited)
             if err then
@@ -214,12 +213,8 @@ local function walk_and_normalize(node, version, warnings, strict, visited)
     return nil
 end
 
---- Normalize all schemas in an OpenAPI spec.
--- @param spec table        parsed and $ref-resolved spec
--- @param version string    "3.0" or "3.1"
--- @param opts table        { strict = true|false }
--- @return table   warnings list
--- @return string|nil  error (only on strict failure)
+-- Normalize all schemas in an OpenAPI spec.
+
 function _M.normalize_spec(spec, version, opts)
     local warnings = {}
     local strict = opts and opts.strict or false

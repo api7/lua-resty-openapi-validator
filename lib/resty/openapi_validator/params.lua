@@ -1,4 +1,4 @@
---- Parameter coercion and validation.
+-- Parameter coercion and validation.
 -- Handles path, query, and header parameters:
 -- 1. Type coercion from string to schema-declared type
 -- 2. Style/explode deserialization (form, simple, label, matrix, deepObject)
@@ -6,30 +6,30 @@
 
 local _M = {}
 
-local type = type
-local tonumber = tonumber
-local pairs = pairs
-local ipairs = ipairs
-local lower = string.lower
-local find = string.find
-local sub = string.sub
-local gsub = string.gsub
-local insert = table.insert
-local concat = table.concat
+local type       = type
+local tonumber   = tonumber
+local pairs      = pairs
+local ipairs     = ipairs
+local pcall      = pcall
+local str_lower  = string.lower
+local str_find   = string.find
+local sub_str    = string.sub
+local tab_insert = table.insert
+local str_gmatch = string.gmatch
 
 local cjson
-local has_cjson, _ = pcall(function()
+local has_cjson = pcall(function()
     cjson = require("cjson.safe")
 end)
 
 local jsonschema
-local has_jsonschema, _ = pcall(function()
+local has_jsonschema = pcall(function()
     jsonschema = require("jsonschema")
 end)
 
 local errors = require("resty.openapi_validator.errors")
 
--- Schema validator cache: schema_table → validator_function
+-- Schema validator cache: schema_table -> validator_function
 local validator_cache = setmetatable({}, { __mode = "k" })
 
 local function get_validator(schema)
@@ -47,7 +47,8 @@ local function get_validator(schema)
     return nil
 end
 
---- Collect all possible types from a schema, including composite sub-schemas.
+
+-- Collect all possible types from a schema, including composite sub-schemas.
 local function collect_types(schema, seen)
     if not schema then return {} end
     seen = seen or {}
@@ -69,8 +70,8 @@ local function collect_types(schema, seen)
     for _, key in ipairs({"anyOf", "oneOf", "allOf"}) do
         local composite = schema[key]
         if composite then
-            for _, sub in ipairs(composite) do
-                local sub_types = collect_types(sub, seen)
+            for _, sub_schema in ipairs(composite) do
+                local sub_types = collect_types(sub_schema, seen)
                 for t in pairs(sub_types) do
                     types[t] = true
                 end
@@ -81,10 +82,8 @@ local function collect_types(schema, seen)
     return types
 end
 
---- Coerce a string value to the type declared in schema.
--- @param value string   raw value from request
--- @param schema table   parameter schema
--- @return any   coerced value
+
+-- Coerce a string value to the type declared in schema.
 local function coerce_value(value, schema)
     if value == nil then
         return nil
@@ -111,7 +110,7 @@ local function coerce_value(value, schema)
         if n then
             return n
         end
-        return value -- let schema validation catch the type error
+        return value
     elseif stype == "boolean" then
         if value == "true" or value == "1" then
             return true
@@ -121,10 +120,8 @@ local function coerce_value(value, schema)
         return value
     end
 
-    -- no direct type — check composite schemas for possible types
     if not stype then
         local possible = collect_types(schema)
-        -- try coercion in order: boolean first (most specific), then number
         if possible["boolean"] then
             if value == "true" or value == "1" then return true end
             if value == "false" or value == "0" then return false end
@@ -138,7 +135,8 @@ local function coerce_value(value, schema)
     return value
 end
 
---- Coerce values within an object according to its schema properties.
+
+-- Coerce values within an object according to its schema properties.
 local function coerce_object_values(obj, schema)
     if type(obj) ~= "table" or type(schema) ~= "table" then
         return obj
@@ -155,41 +153,38 @@ local function coerce_object_values(obj, schema)
     return obj
 end
 
---- Split a string by delimiter.
+
+-- Split a string by delimiter.
 local function split(s, delim)
     local result = {}
     local from = 1
     local pos
     while true do
-        pos = find(s, delim, from, true)
+        pos = str_find(s, delim, from, true)
         if not pos then
-            insert(result, sub(s, from))
+            tab_insert(result, sub_str(s, from))
             break
         end
-        insert(result, sub(s, from, pos - 1))
+        tab_insert(result, sub_str(s, from, pos - 1))
         from = pos + 1
     end
     return result
 end
 
---- Parse deepObject style query parameters.
+
+-- Parse deepObject style query parameters.
 -- deepObject format: param[key]=value or param[key][subkey]=value
--- @param param_name string   the parameter name
--- @param query_args table    all query arguments
--- @param schema table        the parameter schema
--- @return table|nil  parsed nested object
 local function parse_deep_object(param_name, query_args, schema)
     local obj = {}
     local prefix = param_name .. "["
     local found = false
 
     for key, val in pairs(query_args) do
-        if sub(key, 1, #prefix) == prefix then
+        if sub_str(key, 1, #prefix) == prefix then
             found = true
-            -- extract the bracket path: param[a][b] → {"a", "b"}
             local path = {}
-            for bracket_key in key:gmatch("%[([^%]]+)%]") do
-                insert(path, bracket_key)
+            for bracket_key in str_gmatch(key, "%[([^%]]+)%]") do
+                tab_insert(path, bracket_key)
             end
 
             if #path > 0 then
@@ -201,7 +196,6 @@ local function parse_deep_object(param_name, query_args, schema)
                     end
                     current = current[p]
                 end
-                -- use the first value if multiple
                 local v = type(val) == "table" and val[1] or val
                 current[path[#path]] = v
             end
@@ -212,10 +206,8 @@ local function parse_deep_object(param_name, query_args, schema)
         return nil
     end
 
-    -- coerce values based on schema properties
     coerce_object_values(obj, schema)
 
-    -- also recurse into nested objects
     if schema.properties then
         for pname, pschema in pairs(schema.properties) do
             if type(obj[pname]) == "table" and pschema.type == "object" then
@@ -227,16 +219,10 @@ local function parse_deep_object(param_name, query_args, schema)
     return obj
 end
 
---- Deserialize a parameter value according to its style and explode settings.
+
+-- Deserialize a parameter value according to its style and explode settings.
 -- See: https://spec.openapis.org/oas/v3.1.0#style-values
---
--- Default styles per location:
---   path: simple, explode=false
---   query: form, explode=true
---   header: simple, explode=false
 local function deserialize_param(raw_value, param, query_args)
-    -- handle content-based parameters (param.content.application/json) first,
-    -- since these params have no param.schema (schema lives inside content)
     if param.content then
         local json_content = param.content["application/json"]
         if json_content and json_content.schema and has_cjson then
@@ -256,7 +242,6 @@ local function deserialize_param(raw_value, param, query_args)
     local explode = param.explode
     local loc = param["in"]
 
-    -- set defaults
     if not style then
         if loc == "query" then
             style = "form"
@@ -280,7 +265,6 @@ local function deserialize_param(raw_value, param, query_args)
             if not explode then
                 values = split(raw_value, ",")
             else
-                -- explode=true for query: handled by caller (multiple values)
                 if type(raw_value) == "table" then
                     values = raw_value
                 else
@@ -295,7 +279,6 @@ local function deserialize_param(raw_value, param, query_args)
             values = { raw_value }
         end
 
-        -- coerce each element
         for i, v in ipairs(values) do
             values[i] = coerce_value(v, items_schema)
         end
@@ -306,7 +289,6 @@ local function deserialize_param(raw_value, param, query_args)
             return parse_deep_object(param.name, query_args or {}, schema)
         end
 
-        -- simple style object: key,value,key,value...
         if style == "simple" and not explode then
             local parts = split(raw_value, ",")
             local obj = {}
@@ -315,7 +297,6 @@ local function deserialize_param(raw_value, param, query_args)
             end
             return coerce_object_values(obj, schema)
         elseif style == "simple" and explode then
-            -- key=value,key=value
             local parts = split(raw_value, ",")
             local obj = {}
             for _, part in ipairs(parts) do
@@ -326,8 +307,6 @@ local function deserialize_param(raw_value, param, query_args)
             end
             return coerce_object_values(obj, schema)
         elseif style == "form" and explode then
-            -- explode=true for form+object: each key is a separate query param
-            -- handled at higher level
             if type(raw_value) == "table" then
                 return coerce_object_values(raw_value, schema)
             end
@@ -335,18 +314,11 @@ local function deserialize_param(raw_value, param, query_args)
         return raw_value
     end
 
-    -- scalar
     return coerce_value(raw_value, schema)
 end
 
---- Validate parameters for a matched route.
--- @param route table       matched route from router
--- @param path_params table extracted path parameter values { name = value }
--- @param query_args table  query arguments from request (ngx.req.get_uri_args style)
--- @param headers table     request headers (lowercase keys)
--- @param skip table|nil    { path = bool, query = bool, header = bool }
--- @return boolean
--- @return table|nil  list of error tables
+
+-- Validate parameters for a matched route.
 function _M.validate(route, path_params, query_args, headers, skip)
     skip = skip or {}
     query_args = query_args or {}
@@ -356,40 +328,37 @@ function _M.validate(route, path_params, query_args, headers, skip)
     local function validate_param_group(param_list, location, raw_values)
         for _, param in ipairs(param_list) do
             local name = param.name
-            local style = param.style or (location == "query" and "form" or "simple")
+            local style = param.style
+                          or (location == "query" and "form" or "simple")
             local raw
 
-            -- deepObject params are parsed from the full query args
             if style == "deepObject" and location == "query" then
-                raw = "deepObject_placeholder" -- just a non-nil marker
+                raw = "deepObject_placeholder"
             else
                 raw = raw_values[name]
             end
 
-            -- for headers, try case-insensitive
             if location == "header" and raw == nil then
-                raw = raw_values[lower(name)]
+                raw = raw_values[str_lower(name)]
             end
 
-            -- check required
             if param.required and (raw == nil or raw == "") then
-                -- for deepObject, check if any key with prefix exists
                 if style == "deepObject" and location == "query" then
                     local prefix = name .. "["
                     local found = false
                     for k in pairs(query_args) do
-                        if sub(k, 1, #prefix) == prefix then
+                        if sub_str(k, 1, #prefix) == prefix then
                             found = true
                             break
                         end
                     end
                     if not found then
-                        insert(errs, errors.new(location, name,
+                        tab_insert(errs, errors.new(location, name,
                             "required parameter is missing"))
                         goto continue
                     end
                 else
-                    insert(errs, errors.new(location, name,
+                    tab_insert(errs, errors.new(location, name,
                         "required parameter is missing"))
                     goto continue
                 end
@@ -400,7 +369,6 @@ function _M.validate(route, path_params, query_args, headers, skip)
             end
 
             local schema = param.schema
-            -- for content-based parameters, use the content schema
             if not schema and param.content then
                 local json_ct = param.content["application/json"]
                 if json_ct then
@@ -411,21 +379,19 @@ function _M.validate(route, path_params, query_args, headers, skip)
                 goto continue
             end
 
-            -- deserialize and coerce
             local value = deserialize_param(raw, param, query_args)
 
-            -- for deepObject, nil means no matching keys found — skip if optional
             if value == nil and not param.required then
                 goto continue
             end
 
-            -- validate with jsonschema
             local validator = get_validator(schema)
             if validator then
                 local ok, err = validator(value)
                 if not ok then
-                    local msg = type(err) == "string" and err or "validation failed"
-                    insert(errs, errors.new(location, name, msg))
+                    local msg = type(err) == "string" and err
+                                or "validation failed"
+                    tab_insert(errs, errors.new(location, name, msg))
                 end
             end
 

@@ -15,7 +15,6 @@ Table of Contents
 * [API](api.md)
 * [Validation Scope](#validation-scope)
 * [OpenAPI 3.1 Support](#openapi-31-support)
-* [Benchmark](#benchmark)
 * [Testing](#testing)
 
 Description
@@ -24,7 +23,7 @@ Description
 Validates HTTP requests against OpenAPI 3.0 and 3.1 specifications using
 [lua-resty-radixtree](https://github.com/api7/lua-resty-radixtree) for path
 matching and [api7/jsonschema](https://github.com/api7/jsonschema) for schema
-validation. No Go FFI or external processes required.
+validation. Pure Lua, no external processes required.
 
 Install
 =======
@@ -130,14 +129,6 @@ library supports up to Draft 7, schemas are normalized at compile time:
 
 [Back to TOC](#table-of-contents)
 
-Benchmark
-=========
-
-**~45% higher throughput** than the Go FFI-based validator under concurrent load
-(single worker, 50 connections). See [benchmark/RESULTS.md](benchmark/RESULTS.md).
-
-[Back to TOC](#table-of-contents)
-
 Testing
 =======
 
@@ -145,8 +136,9 @@ Testing
 make test
 ```
 
-Runs unit tests and conformance tests ported from
-[kin-openapi](https://github.com/getkin/kin-openapi).
+Runs unit tests and conformance tests covering OpenAPI 3.0 / 3.1 features
+(parameter serialization, request body validation, discriminator, $ref,
+readOnly/writeOnly, deepObject/form/multipart, etc.).
 
 [Back to TOC](#table-of-contents)
 

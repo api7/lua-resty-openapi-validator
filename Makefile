@@ -7,7 +7,7 @@ RESTY := /usr/local/openresty/bin/resty --shdict "test 1m"
 UNIT_TESTS := $(sort $(wildcard t/unit/test_*.lua))
 CONFORMANCE_TESTS := $(sort $(wildcard t/conformance/test_*.lua))
 
-.PHONY: test test-unit test-conformance benchmark lint dev install clean help
+.PHONY: test test-unit test-conformance lint dev install clean help
 
 ### help:          Show Makefile rules
 help:
@@ -38,14 +38,10 @@ test-conformance:
 	@echo "=== Conformance tests ==="
 	@for f in $(CONFORMANCE_TESTS); do $(RESTY) -e "dofile('$$f')" || exit 1; done
 
-### benchmark:     Run microbenchmark
-benchmark:
-	@$(RESTY) -e 'dofile("benchmark/bench.lua")'
-
 ### lint:          Lint Lua source code
 lint:
 	luacheck -q lib/
 
 ### clean:         Remove build artifacts
 clean:
-	rm -rf *.rock benchmark/logs/ benchmark/nginx.conf
+	rm -rf *.rock

@@ -122,6 +122,7 @@ function _M.resolve(spec)
                 return nil, err
             end
 
+            resolved._ref = ref
             registry[pointer] = resolved
             resolving[pointer] = nil
 

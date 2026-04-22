@@ -36,6 +36,25 @@ local function resolve_pointer(root, pointer)
 end
 
 
+-- Collect all $dynamicAnchor targets from a spec tree.
+-- Returns a map from anchor name to the table containing the anchor.
+local function collect_dynamic_anchors(node, anchors, visited)
+    if type(node) ~= "table" or visited[node] then
+        return
+    end
+    visited[node] = true
+
+    local anchor = node["$dynamicAnchor"]
+    if anchor then
+        anchors[anchor] = node
+    end
+
+    for _, v in pairs(node) do
+        collect_dynamic_anchors(v, anchors, visited)
+    end
+end
+
+
 -- Walk the spec tree and resolve every $ref node in place.
 --
 -- Strategy:
@@ -56,6 +75,10 @@ end
 function _M.resolve(spec)
     local registry = {}
     local walked = {}
+
+    -- Collect $dynamicAnchor targets for $dynamicRef resolution
+    local dynamic_anchors = {}
+    collect_dynamic_anchors(spec, dynamic_anchors, {})
 
     local walk
 
@@ -116,6 +139,32 @@ function _M.resolve(spec)
                     else
                         node[k] = resolved
                     end
+                elseif v["$dynamicRef"] then
+                    -- Resolve $dynamicRef by looking up the anchor
+                    local dyn_ref = v["$dynamicRef"]
+                    local anchor_name = dyn_ref:match("^#(.+)$")
+                    if anchor_name and dynamic_anchors[anchor_name] then
+                        local target = dynamic_anchors[anchor_name]
+                        walk(target)
+
+                        -- collect sibling keys
+                        local siblings, has_siblings
+                        for sk, sv in pairs(v) do
+                            if sk ~= "$dynamicRef" then
+                                siblings = siblings or {}
+                                siblings[sk] = sv
+                                has_siblings = true
+                            end
+                        end
+
+                        if has_siblings then
+                            walk(siblings)
+                            node[k] = { allOf = { target, siblings } }
+                        else
+                            node[k] = target
+                        end
+                    end
+                    -- unresolved $dynamicRef: leave for normalize to warn/error
                 else
                     walk(v)
                 end

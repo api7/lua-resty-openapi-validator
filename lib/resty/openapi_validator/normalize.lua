@@ -11,8 +11,6 @@ local tab_insert = table.insert
 
 -- Keywords that are Draft 2020-12 only and have no Draft 7 equivalent
 local UNSUPPORTED_31_KEYWORDS = {
-    ["$dynamicRef"] = true,
-    ["$dynamicAnchor"] = true,
     ["unevaluatedProperties"] = true,
     ["unevaluatedItems"] = true,
 }
@@ -97,6 +95,19 @@ end
 local function normalize_31_schema(schema, warnings, strict)
     if type(schema) ~= "table" then
         return nil
+    end
+
+    -- Strip $dynamicAnchor (resolved during refs phase)
+    schema["$dynamicAnchor"] = nil
+
+    -- Warn about any remaining $dynamicRef (should have been resolved)
+    if schema["$dynamicRef"] then
+        if strict then
+            return "unresolved $dynamicRef: " .. schema["$dynamicRef"]
+        end
+        tab_insert(warnings, "unresolved $dynamicRef ignored: "
+                             .. schema["$dynamicRef"])
+        schema["$dynamicRef"] = nil
     end
 
     -- Check for unsupported 2020-12 keywords

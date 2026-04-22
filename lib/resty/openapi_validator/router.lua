@@ -106,6 +106,37 @@ local function find_body_info(operation)
 end
 
 
+-- Extract base paths from the servers array.
+-- Returns a list of base path prefixes (empty string if none).
+local function extract_base_paths(spec)
+    local servers = spec.servers
+    if not servers or #servers == 0 then
+        return { "" }
+    end
+
+    local bases = {}
+    for _, srv in ipairs(servers) do
+        local url = srv.url or ""
+        -- strip protocol+host if present, keep only the path portion
+        local path = url:match("^https?://[^/]*(/.*)$") or url
+        -- remove trailing slash
+        if #path > 1 and str_byte(path, #path) == SLASH then
+            path = sub_str(path, 1, #path - 1)
+        end
+        -- "/" means no prefix
+        if path == "/" then
+            path = ""
+        end
+        bases[#bases + 1] = path
+    end
+
+    if #bases == 0 then
+        return { "" }
+    end
+    return bases
+end
+
+
 -- Build a router from a compiled OpenAPI spec.
 function _M.new(spec)
     local radix_routes = {}
@@ -116,9 +147,10 @@ function _M.new(spec)
         return setmetatable({ rx = nil, metadata = route_metadata }, _router_mt)
     end
 
+    local base_paths = extract_base_paths(spec)
+
     local route_id = 0
     for path_template, path_item in pairs(paths) do
-        local radix_path = convert_path(path_template)
         local param_names = extract_param_names(path_template)
 
         for method, operation in pairs(path_item) do
@@ -142,8 +174,14 @@ function _M.new(spec)
                     body_required = body_required,
                 }
 
+                local route_paths = {}
+                for _, base in ipairs(base_paths) do
+                    route_paths[#route_paths + 1] =
+                        convert_path(base .. path_template)
+                end
+
                 tab_insert(radix_routes, {
-                    paths    = { radix_path },
+                    paths    = route_paths,
                     methods  = { m },
                     metadata = id,
                 })

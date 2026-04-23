@@ -344,6 +344,14 @@ function _M.validate(route, body_str, content_type, opts)
     opts = opts or {}
     local errs = {}
 
+    -- Normalize non-string content_type (e.g. cjson.null sentinel — which is
+    -- userdata and truthy in Lua, so naive `and content_type` checks would
+    -- let it through and crash inside str_lower) to nil so downstream code
+    -- can treat it uniformly with "header absent".
+    if type(content_type) ~= "string" then
+        content_type = nil
+    end
+
     if route.body_required then
         if body_str == nil or body_str == "" then
             tab_insert(errs, errors.new("body", nil, "request body is required"))
@@ -360,10 +368,7 @@ function _M.validate(route, body_str, content_type, opts)
     end
 
     -- check content-type is declared in the spec
-    -- guard against non-string content_type values (e.g. cjson.null sentinel,
-    -- which is userdata and truthy in Lua so the previous `and content_type`
-    -- check let it through and crashed in str_lower).
-    if route.body_content and type(content_type) == "string" then
+    if route.body_content and content_type then
         local ct_lower = str_lower(content_type)
         local found = false
         for media_type in pairs(route.body_content) do

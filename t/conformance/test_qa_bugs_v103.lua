@@ -158,9 +158,10 @@ end)
 
 -- Bug 5: cjson.null in content_type (e.g. caller passed a parsed JSON value
 -- through verbatim) is userdata, which is truthy in Lua. The body validator
--- entered the content-type branch and crashed. Now guarded with a string
--- type check.
-T.describe("Bug 5: cjson.null content_type does not crash", function()
+-- entered the content-type branch and crashed. Now normalized to nil at the
+-- top of body.validate so all downstream sites (find_body_schema_for_content_type,
+-- is_json_content_type, ...) treat it like an absent header.
+T.describe("Bug 5: cjson.null content_type does not crash (with body present)", function()
     local v = compile({
         openapi = "3.0.0",
         info = { title = "t", version = "0" },
@@ -180,11 +181,66 @@ T.describe("Bug 5: cjson.null content_type does not crash", function()
             },
         },
     })
-    local ok, err = pcall(v.validate_request, v, {
+    -- Non-empty body so the body validator actually evaluates content_type
+    -- (an empty body short-circuits before the content-type branch).
+    local pcall_ok, ok, err = pcall(v.validate_request, v, {
         method = "POST", path = "/p",
         content_type = cjson.null,
+        body = '{"hello":"world"}',
     })
-    T.ok(ok, "cjson.null content_type didn't crash: " .. tostring(err))
+    T.ok(pcall_ok, "cjson.null content_type didn't crash: " .. tostring(ok))
+    -- With content_type normalized to nil, treated as no declared CT match;
+    -- since the request has a body but the validator can't find a schema for
+    -- the (absent) content-type, it should not crash. Outcome (ok or not) is
+    -- secondary; the regression is the crash.
+    T.ok(ok ~= nil, "validator returned a value, not a crash: ok=" .. tostring(ok) .. " err=" .. tostring(err))
+end)
+
+-- Bug 2b: nullable + const = null collapses to just {type:"null"}, which
+-- means anything other than null must be rejected.
+T.describe("Bug 2b: nullable + const=null only accepts null", function()
+    local v = compile({
+        openapi = "3.0.0",
+        info = { title = "t", version = "0" },
+        paths = {
+            ["/c"] = {
+                post = {
+                    requestBody = {
+                        required = true,
+                        content = {
+                            ["application/json"] = {
+                                schema = {
+                                    type = "object",
+                                    properties = {
+                                        v = {
+                                            type = "string",
+                                            nullable = true,
+                                            ["const"] = cjson.null,
+                                        },
+                                    },
+                                    required = { "v" },
+                                },
+                            },
+                        },
+                    },
+                    responses = { ["200"] = { description = "ok" } },
+                },
+            },
+        },
+    })
+    local ok = v:validate_request({
+        method = "POST", path = "/c",
+        content_type = "application/json",
+        body = '{"v":null}',
+    })
+    T.ok(ok, "null is accepted (only allowed value)")
+
+    local ok2 = v:validate_request({
+        method = "POST", path = "/c",
+        content_type = "application/json",
+        body = '{"v":"anything"}',
+    })
+    T.ok(not ok2, "non-null rejected when const is null")
 end)
 
 T.done()

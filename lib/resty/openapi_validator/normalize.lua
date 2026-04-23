@@ -43,6 +43,19 @@ local function normalize_30_schema(schema, warnings)
                     original[k] = v
                 end
             end
+            -- A const that is exactly `null` means "must be null", so the
+            -- nullable wrapper collapses to just `{type:"null"}` — there's
+            -- no remaining non-null branch to keep.
+            local null_only_const = original["const"] == cjson.null
+            if null_only_const then
+                for k in pairs(schema) do schema[k] = nil end
+                schema.type = "null"
+                return
+            end
+            -- Otherwise, strip any null entries from the enum. The
+            -- `{type:"null"}` branch added below already permits null,
+            -- and leaving cjson.null inside an enum array silently
+            -- disables the entire enum check inside api7/jsonschema.
             if type(original.enum) == "table" then
                 local cleaned = {}
                 for _, val in ipairs(original.enum) do
@@ -50,10 +63,13 @@ local function normalize_30_schema(schema, warnings)
                         tab_insert(cleaned, val)
                     end
                 end
+                -- An enum containing only `null` similarly collapses.
+                if #cleaned == 0 and not original["const"] then
+                    for k in pairs(schema) do schema[k] = nil end
+                    schema.type = "null"
+                    return
+                end
                 original.enum = cleaned
-            end
-            if original["const"] == cjson.null then
-                original["const"] = nil
             end
             for k in pairs(schema) do
                 schema[k] = nil

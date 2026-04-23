@@ -287,11 +287,28 @@ local function deserialize_param(raw_value, param, query_args)
         local items_schema = schema.items or {}
         local values
 
+        -- Coerce table values into a single delimited string for the
+        -- delimiter-based styles. This happens in real callers when, e.g.,
+        -- ngx.req.get_uri_args returns `{"a","b"}` for `?fields=a&fields=b`
+        -- but the schema is declared `style:form, explode:false` (comma-
+        -- separated). Previously this crashed in split() with
+        -- "bad argument #1 to 'str_find' (string expected, got table)".
+        local function coerce_to_string(delim)
+            if type(raw_value) == "table" then
+                local out = {}
+                for _, v in ipairs(raw_value) do
+                    tab_insert(out, tostring(v))
+                end
+                return table.concat(out, delim)
+            end
+            return raw_value
+        end
+
         if style == "simple" then
-            values = split(raw_value, ",")
+            values = split(coerce_to_string(","), ",")
         elseif style == "form" then
             if not explode then
-                values = split(raw_value, ",")
+                values = split(coerce_to_string(","), ",")
             else
                 if type(raw_value) == "table" then
                     values = raw_value
@@ -300,9 +317,9 @@ local function deserialize_param(raw_value, param, query_args)
                 end
             end
         elseif style == "pipeDelimited" then
-            values = split(raw_value, "|")
+            values = split(coerce_to_string("|"), "|")
         elseif style == "spaceDelimited" then
-            values = split(raw_value, " ")
+            values = split(coerce_to_string(" "), " ")
         else
             values = { raw_value }
         end

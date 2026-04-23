@@ -36,6 +36,72 @@ local function convert_path(path_template)
 end
 
 
+-- Detect path templates whose segments mix a {var} with literal text or
+-- multiple {var}s in the same segment, e.g. "/foo/{id}.json" or
+-- "/baz/{name}.{ext}". radixtree's :param syntax cannot extract these
+-- correctly because it consumes the entire `/`-bounded segment as one
+-- variable; the literal suffix is silently dropped from both the captured
+-- value and the param name. For such templates we fall back to a per-route
+-- PCRE that re-extracts path params at match time.
+local function has_mixed_segment(path_template)
+    for seg in str_gmatch(path_template, "/([^/]*)") do
+        local has_var = str_find(seg, "{", 1, true) ~= nil
+        if has_var then
+            -- a clean segment is exactly "{name}" with nothing else
+            if not (str_byte(seg, 1) == str_byte("{")
+                    and str_byte(seg, #seg) == str_byte("}")
+                    and (str_find(seg, "}", 2, true) == #seg)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+
+local PCRE_META = {
+    ["%"] = true, ["."] = true, ["*"] = true, ["+"] = true, ["?"] = true,
+    ["("] = true, [")"] = true, ["["] = true, ["]"] = true, ["{"] = true,
+    ["}"] = true, ["|"] = true, ["^"] = true, ["$"] = true, ["\\"] = true,
+    ["/"] = true,
+}
+
+local function pcre_escape(s)
+    return (str_gsub(s, ".", function(c)
+        if PCRE_META[c] then return "\\" .. c end
+    end))
+end
+
+
+-- Build a PCRE pattern + ordered name list that extracts path params from
+-- a request path matching `path_template`. Used as a fallback when
+-- has_mixed_segment(path_template) is true.
+local function build_param_pcre(path_template)
+    local names = {}
+    local out = {}
+    local i = 1
+    while i <= #path_template do
+        local lb = str_find(path_template, "{", i, true)
+        if not lb then
+            tab_insert(out, pcre_escape(sub_str(path_template, i)))
+            break
+        end
+        if lb > i then
+            tab_insert(out, pcre_escape(sub_str(path_template, i, lb - 1)))
+        end
+        local rb = str_find(path_template, "}", lb + 1, true)
+        if not rb then
+            tab_insert(out, pcre_escape(sub_str(path_template, lb)))
+            break
+        end
+        tab_insert(names, sub_str(path_template, lb + 1, rb - 1))
+        tab_insert(out, "([^/]+?)")
+        i = rb + 1
+    end
+    return "^" .. table.concat(out) .. "$", names
+end
+
+
 -- Extract param names from {param} in path template.
 local function extract_param_names(path_template)
     local names = {}
@@ -152,6 +218,11 @@ function _M.new(spec)
     local route_id = 0
     for path_template, path_item in pairs(paths) do
         local param_names = extract_param_names(path_template)
+        local mixed = has_mixed_segment(path_template)
+        local param_pcre, pcre_names
+        if mixed then
+            param_pcre, pcre_names = build_param_pcre(path_template)
+        end
 
         for method, operation in pairs(path_item) do
             local m = str_upper(method)
@@ -166,6 +237,9 @@ function _M.new(spec)
                 route_metadata[id] = {
                     path_template = path_template,
                     param_names   = param_names,
+                    param_pcre    = param_pcre,
+                    pcre_names    = pcre_names,
+                    base_paths    = base_paths,
                     method        = m,
                     operation     = operation,
                     params        = params,
@@ -238,6 +312,41 @@ function _M.match(self, method, path)
     local path_params = {}
     for _, name in ipairs(route.param_names) do
         path_params[name] = matched["_" .. name]
+    end
+
+    -- Fallback: when the template has mixed segments (e.g. "/foo/{id}.json"
+    -- or "/baz/{name}.{ext}"), radixtree can match the route but cannot
+    -- extract the variables (it consumes the whole `/`-bounded segment as
+    -- one param and silently drops the literal suffix). Re-extract the
+    -- params here using a per-route PCRE built from the template.
+    if route.param_pcre then
+        local ngx_re = require("ngx.re")
+        local re_match = ngx.re.match
+        local m
+        local bases = route.base_paths or { "" }
+        for _, base in ipairs(bases) do
+            local rel = path
+            if base ~= "" then
+                if str_find(path, base, 1, true) == 1 then
+                    rel = sub_str(path, #base + 1)
+                    if rel == "" then rel = "/" end
+                else
+                    rel = nil
+                end
+            end
+            if rel then
+                local mm, err = re_match(rel, route.param_pcre, "jo")
+                if mm then m = mm; break end
+            end
+        end
+        if not m then
+            -- radixtree matched but our authoritative regex doesn't:
+            -- treat as no match so callers get a clean error.
+            return nil, nil
+        end
+        for i, name in ipairs(route.pcre_names or {}) do
+            path_params[name] = m[i]
+        end
     end
 
     return route, path_params

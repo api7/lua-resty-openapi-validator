@@ -4,6 +4,7 @@
 
 local _M = {}
 
+local cjson      = require("cjson.safe")
 local type       = type
 local pairs      = pairs
 local ipairs     = ipairs
@@ -28,16 +29,32 @@ local function normalize_30_schema(schema, warnings)
 
         -- For nullable schemas with enum or const, we cannot simply inject
         -- cjson.null into enum (jsonschema can't handle userdata in enum).
-        -- Use anyOf: [original_schema_without_nullable, {type: "null"}]
+        -- Use anyOf: [original_schema_without_nullable, {type: "null"}].
+        --
+        -- IMPORTANT: if the original enum already contains cjson.null (i.e.
+        -- the spec author wrote `enum: [..., null]`), the userdata sentinel
+        -- silently disables the entire enum check inside api7/jsonschema.
+        -- Strip null entries from the enum here — the {type: "null"} branch
+        -- of the anyOf wrapper already permits null.
         if schema.enum or schema["const"] then
-            -- save and remove nullable-related fields, wrap in anyOf
             local original = {}
             for k, v in pairs(schema) do
                 if k ~= "nullable" then
                     original[k] = v
                 end
             end
-            -- clear schema and replace with anyOf
+            if type(original.enum) == "table" then
+                local cleaned = {}
+                for _, val in ipairs(original.enum) do
+                    if val ~= cjson.null then
+                        tab_insert(cleaned, val)
+                    end
+                end
+                original.enum = cleaned
+            end
+            if original["const"] == cjson.null then
+                original["const"] = nil
+            end
             for k in pairs(schema) do
                 schema[k] = nil
             end

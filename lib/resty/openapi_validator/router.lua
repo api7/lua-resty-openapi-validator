@@ -320,7 +320,6 @@ function _M.match(self, method, path)
     -- one param and silently drops the literal suffix). Re-extract the
     -- params here using a per-route PCRE built from the template.
     if route.param_pcre then
-        local ngx_re = require("ngx.re")
         local re_match = ngx.re.match
         local m
         local bases = route.base_paths or { "" }
@@ -335,7 +334,7 @@ function _M.match(self, method, path)
                 end
             end
             if rel then
-                local mm, err = re_match(rel, route.param_pcre, "jo")
+                local mm = re_match(rel, route.param_pcre, "jo")
                 if mm then m = mm; break end
             end
         end

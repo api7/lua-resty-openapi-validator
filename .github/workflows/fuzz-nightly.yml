@@ -1,0 +1,112 @@
+name: fuzz-nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # 18:00 UTC = 02:00 China next day
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: 'Fuzz budget in seconds'
+        required: false
+        default: '600'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-22.04
+    env:
+      OPENRESTY_PREFIX: "/usr/local/openresty"
+      FUZZ_BUDGET: ${{ github.event.inputs.budget || '600' }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev libreadline-dev libssl-dev perl lua5.1 liblua5.1-0-dev
+
+      - name: Install OpenResty
+        run: |
+          wget -qO - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y openresty
+
+      - name: Install LuaRocks
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/apache/apisix/master/utils/linux-install-luarocks.sh | sh
+
+      - name: Install Lua dependencies
+        run: |
+          sudo luarocks install jsonschema
+          sudo luarocks install lua-resty-radixtree
+
+      - name: Run mutation fuzzer
+        id: fuzz
+        continue-on-error: true
+        run: |
+          export PATH=$OPENRESTY_PREFIX/nginx/sbin:$OPENRESTY_PREFIX/bin:$PATH
+          make fuzz FUZZ_BUDGET=$FUZZ_BUDGET
+
+      - name: Upload findings
+        if: steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings-${{ github.run_id }}
+          path: fuzz/out/
+          retention-days: 90
+
+      - name: Open / update tracking issue
+        if: steps.fuzz.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          TITLE="Nightly fuzz failure: $DATE"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SUMMARY=$(cat fuzz/out/summary.json 2>/dev/null || echo '{}')
+          FIRST5=$(head -n 5 fuzz/out/crashes.jsonl 2>/dev/null || echo '(no crashes.jsonl found)')
+          BODY=$(cat <<EOF
+          The nightly fuzz run failed.
+
+          - Run: $RUN_URL
+          - Summary: \`$SUMMARY\`
+          - Findings artifact: \`fuzz-findings-${{ github.run_id }}\` (attached to the run, retained 90 days)
+
+          First 5 findings:
+          \`\`\`
+          $FIRST5
+          \`\`\`
+
+          To reproduce locally:
+          \`\`\`
+          make fuzz FUZZ_BUDGET=$FUZZ_BUDGET
+          \`\`\`
+          EOF
+          )
+
+          # De-dup: reuse any open issue with the fuzz-nightly label.
+          existing=$(gh issue list --label fuzz-nightly --state open \
+            --json number --jq '.[0].number' || echo "")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$BODY"
+            gh issue edit "$existing" --add-assignee jarvis9443 || true
+          else
+            # Ensure label exists (idempotent).
+            gh label create fuzz-nightly --color FBCA04 \
+              --description "Findings from the nightly fuzz job" 2>/dev/null || true
+            gh issue create --title "$TITLE" \
+              --label fuzz-nightly,bug \
+              --assignee jarvis9443 \
+              --body "$BODY"
+          fi
+
+      - name: Fail the job if fuzz failed
+        if: steps.fuzz.outcome == 'failure'
+        run: exit 1

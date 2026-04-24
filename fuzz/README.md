@@ -31,7 +31,7 @@ Mutators (`fuzz/mutate_fuzz.py`):
 |---|---|---|
 | `path_extension` | append `.json` / `.xml` / `.txt` / `.v2` to a random path | path-routing edge cases (Bug 1) |
 | `nullable_enum` | inject `null` into an enum + flip `nullable: true` | nullable-enum handling (Bug 2) |
-| `length_on_array` | move `maxLength` onto an `array`/`object` schema | type-inappropriate keywords (Bug 3) |
+| `length_on_array` | move `maxLength` onto an `array` schema | type-inappropriate keywords (Bug 3) |
 | `param_style` | flip parameter `style`/`explode` | parameter parsing (Bug 4 family) |
 | `required_phantom` | add a non-existent property name to `required` | schema-validation edge cases |
 | `swap_scalar_type` | swap `type: integer` ↔ `type: string` | coercion paths |

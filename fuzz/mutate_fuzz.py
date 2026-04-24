@@ -2,7 +2,7 @@
 """
 Mutation fuzzer for lua-resty-openapi-validator.
 
-Takes a seed OpenAPI 3.0 spec, applies N random AST-level mutations, then
+Takes a seed OpenAPI 3.x spec, applies N random AST-level mutations, then
 generates positive request cases against each mutated spec and runs them
 through the validator. Reports any crashes (validator threw a Lua error)
 and any false negatives (a schema-conforming request was rejected).
@@ -20,8 +20,8 @@ bugs:
     5. Add `required` references to non-existent properties
     6. Swap scalar types (`integer` <-> `string` <-> `number` <-> `boolean`)
 
-Output: writes a JSON-lines crash report to fuzz/out/crashes.jsonl. Exits
-non-zero if any crash or false negative was found (so CI can flag).
+Output: writes a JSON-lines findings report to fuzz/out/crashes.jsonl (both
+crashes and false negatives). Exits non-zero if any finding was found.
 """
 from __future__ import annotations
 
@@ -187,7 +187,7 @@ def mutate(spec: dict, n: int, rng: random.Random) -> list[str]:
 # $ref resolution ---------------------------------------------------------------
 
 def resolve_refs(spec: dict) -> dict:
-    """Recursively resolve all $ref pointers in the spec (in-place)."""
+    """Recursively resolve all $ref pointers in the spec, returning a new tree."""
     def _resolve(node, root, seen_refs):
         if isinstance(node, dict):
             if "$ref" in node and isinstance(node["$ref"], str):
@@ -469,7 +469,9 @@ def main():
     crashes_path = out / "crashes.jsonl"
     summary_path = out / "summary.json"
 
-    rng = random.Random(args.seed)
+    rng_seed = args.seed if args.seed is not None else random.randint(0, 2**32 - 1)
+    rng = random.Random(rng_seed)
+    print(f"RNG seed: {rng_seed}", file=sys.stderr)
     seeds = sorted(Path(args.seeds).glob("*.json"))
     if not seeds:
         print(f"no seeds found in {args.seeds}", file=sys.stderr)
@@ -541,6 +543,7 @@ def main():
                               file=sys.stderr)
     finally:
         summary = {
+            "rng_seed": rng_seed,
             "rounds": rounds,
             "cases_run": cases_run,
             "elapsed_s": round(time.time() - t0, 2),

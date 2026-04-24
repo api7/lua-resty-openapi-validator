@@ -31,13 +31,26 @@ jobs:
 
       - name: Install LuaRocks
         run: |
-          LUAROCKS_VER=3.11.1
-          wget -q "https://luarocks.org/releases/luarocks-${LUAROCKS_VER}.tar.gz"
-          tar xzf "luarocks-${LUAROCKS_VER}.tar.gz"
+          LUAROCKS_VER=3.12.0
+          wget -q "https://github.com/luarocks/luarocks/archive/v${LUAROCKS_VER}.tar.gz"
+          tar xzf "v${LUAROCKS_VER}.tar.gz"
           cd "luarocks-${LUAROCKS_VER}"
-          ./configure --with-lua=/usr/local/openresty/luajit \
-            --with-lua-include=/usr/local/openresty/luajit/include/luajit-2.1
-          make && sudo make install
+          ./configure --with-lua=$OPENRESTY_PREFIX/luajit
+          make build && sudo make install
+          cd .. && rm -rf "luarocks-${LUAROCKS_VER}" "v${LUAROCKS_VER}.tar.gz"
+
+          # Configure OpenSSL paths for rocks that need it
+          OPENSSL_PREFIX=$OPENRESTY_PREFIX/openssl3
+          if [ ! -d "$OPENSSL_PREFIX" ]; then
+            OPENSSL_PREFIX=$OPENRESTY_PREFIX/openssl111
+          fi
+          if [ ! -d "$OPENSSL_PREFIX" ]; then
+            OPENSSL_PREFIX=$OPENRESTY_PREFIX/openssl
+          fi
+          if [ -d "$OPENSSL_PREFIX" ]; then
+            luarocks config variables.OPENSSL_LIBDIR ${OPENSSL_PREFIX}/lib
+            luarocks config variables.OPENSSL_INCDIR ${OPENSSL_PREFIX}/include
+          fi
 
       - name: Install Lua dependencies
         run: |

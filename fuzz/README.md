@@ -9,10 +9,9 @@ real-world OpenAPI specs and checks two oracles:
    schema must be **accepted** by the validator. A rejection is a candidate
    false-negative bug.
 
-The fuzzer is the productionised form of the harness used during
-[v1.0.3 QA](../../../qa/lua-resty-openapi-validator-v1.0.3.md). It reproduces
-the bugs that QA found (path-extension Bug 1 against the unfixed validator,
-`utf8_len(table)` Bug 3 against the unfixed jsonschema).
+The fuzzer is the productionised form of the harness used during v1.0.3 QA.
+It reproduces the bugs that QA found (path-extension Bug 1 against the
+unfixed validator, `utf8_len(table)` Bug 3 against the unfixed jsonschema).
 
 ## Architecture
 
@@ -30,7 +29,7 @@ Mutators (`fuzz/mutate_fuzz.py`):
 
 | name | what it does | targets |
 |---|---|---|
-| `path_extension` | append `.json` / `.csv` etc. to a random path | path-routing edge cases (Bug 1) |
+| `path_extension` | append `.json` / `.xml` / `.txt` / `.v2` to a random path | path-routing edge cases (Bug 1) |
 | `nullable_enum` | inject `null` into an enum + flip `nullable: true` | nullable-enum handling (Bug 2) |
 | `length_on_array` | move `maxLength` onto an `array`/`object` schema | type-inappropriate keywords (Bug 3) |
 | `param_style` | flip parameter `style`/`explode` | parameter parsing (Bug 4 family) |
@@ -54,7 +53,7 @@ python3 fuzz/mutate_fuzz.py --budget 60 --seed 7   # reproducible
 Output:
 
 - `fuzz/out/crashes.jsonl` — one JSON object per finding
-- `fuzz/out/summary.json` — `{rounds, cases_run, elapsed_s, crash_count}`
+- `fuzz/out/summary.json` — `{rounds, cases_run, elapsed_s, crash_count, false_negative_count, total_findings}`
 - exits non-zero on any crash or candidate false-negative (CI-friendly)
 
 ## Add a seed
@@ -66,9 +65,9 @@ each round. Recommended size: 30 KB – 300 KB.
 ## Add a mutator
 
 1. Add `def my_mutator(spec, rng): ...` near the other mutators.
-2. Append to `MUTATORS` list.
-3. Mutator must mutate `spec` **in place** and return a label string
-   (or just its function name) for logging.
+2. Append `("name", my_mutator)` to the `MUTATORS` list.
+3. Mutator must mutate `spec` **in place** and return `True` if a mutation
+   was applied, `False` otherwise. The label is taken from the tuple name.
 
 ## Noise filter
 
@@ -84,4 +83,4 @@ means, narrow / shrink it; if it lets through too much noise, widen it.
 - **PR**: `.github/workflows/fuzz.yml` — 120s budget, fails the PR on any finding.
 - **Nightly**: `.github/workflows/fuzz-nightly.yml` — 600s budget, on
   failure uploads `fuzz/out/` as an artifact and opens (or comments on)
-  a `fuzz-nightly` issue assigned to `@jarvis-api7`.
+  a `fuzz-nightly` issue assigned to `@jarvis9443`.

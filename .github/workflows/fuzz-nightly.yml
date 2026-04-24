@@ -39,7 +39,13 @@ jobs:
 
       - name: Install LuaRocks
         run: |
-          curl -fsSL https://raw.githubusercontent.com/apache/apisix/master/utils/linux-install-luarocks.sh | sh
+          LUAROCKS_VER=3.11.1
+          wget -q "https://luarocks.org/releases/luarocks-${LUAROCKS_VER}.tar.gz"
+          tar xzf "luarocks-${LUAROCKS_VER}.tar.gz"
+          cd "luarocks-${LUAROCKS_VER}"
+          ./configure --with-lua=/usr/local/openresty/luajit \
+            --with-lua-include=/usr/local/openresty/luajit/include/luajit-2.1
+          make && sudo make install
 
       - name: Install Lua dependencies
         run: |

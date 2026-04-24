@@ -3,9 +3,9 @@
 Mutation fuzzer for lua-resty-openapi-validator.
 
 Takes a seed OpenAPI 3.0 spec, applies N random AST-level mutations, then
-generates positive + negative request cases against each mutated spec and
-runs them through the validator. Reports any crashes (validator threw a
-Lua error) and any silent acceptance of obviously-bad requests.
+generates positive request cases against each mutated spec and runs them
+through the validator. Reports any crashes (validator threw a Lua error)
+and any false negatives (a schema-conforming request was rejected).
 
 Mutations are deliberately biased toward the kinds of "weird but legal"
 patterns that real-world specs use and that we've seen trigger validator
@@ -17,17 +17,15 @@ bugs:
     3. Add length keywords (`maxLength`, `minLength`) to non-string types
     4. Switch query param `style` between simple/form/pipeDelimited/
        spaceDelimited and toggle `explode`
-    5. Promote/demote scalar vs array types
-    6. Add `required` references to non-existent properties
-    7. Inject `$ref` cycles inside `components/schemas`
+    5. Add `required` references to non-existent properties
+    6. Swap scalar types (`integer` <-> `string` <-> `number` <-> `boolean`)
 
 Output: writes a JSON-lines crash report to fuzz/out/crashes.jsonl. Exits
-non-zero if any crash was found (so CI can flag).
+non-zero if any crash or false negative was found (so CI can flag).
 """
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import os
 import random
@@ -250,11 +248,15 @@ def gen_cases(spec: dict, rng: random.Random, max_per_op: int = 2) -> list[dict]
     for path, item in spec.get("paths", {}).items():
         if not isinstance(item, dict):
             continue
+        op_count = 0
         for method, op in item.items():
             if method not in ("get", "post", "put", "delete", "patch", "head", "options"):
                 continue
             if not isinstance(op, dict):
                 continue
+            if op_count >= max_per_op:
+                break
+            op_count += 1
 
             # Concrete path: substitute each {token} with a small value matching
             # any declared path-parameter schema.
@@ -413,6 +415,7 @@ def main():
         sys.exit(2)
 
     crashes = []
+    false_negatives = []
     rounds = 0
     cases_run = 0
     t0 = time.time()
@@ -441,14 +444,7 @@ def main():
                           f"{str(r.get('err') or r.get('stderr'))[:200]}",
                           file=sys.stderr)
                 elif phase == "ok" and r.get("label") == "positive" and not r.get("accepted"):
-                    # Oracle: a request we just generated to MATCH the schema
-                    # was rejected. Either the generator is wrong (skip a few
-                    # known-noisy errors) or the validator is wrong. We log
-                    # all and let the user filter.
                     err = (r.get("err") or "").lower()
-                    # Suppress legitimate generator-side noise: we don't try
-                    # to satisfy every constraint (allOf/oneOf/discriminator/
-                    # complex pattern), so these are not validator bugs.
                     noisy = any(s in err for s in (
                         "matches none of the required",
                         "match only one schema",
@@ -474,7 +470,7 @@ def main():
                         continue
                     rec = {"kind": "false_negative", "seed": seed_path.name,
                            "applied": applied, "result": r}
-                    crashes.append(rec)
+                    false_negatives.append(rec)
                     crashf.write(json.dumps(rec) + "\n")
                     crashf.flush()
                     print(f"FALSE_NEGATIVE on {seed_path.name} after {applied}: "
@@ -486,11 +482,13 @@ def main():
         "cases_run": cases_run,
         "elapsed_s": round(time.time() - t0, 2),
         "crash_count": len(crashes),
+        "false_negative_count": len(false_negatives),
+        "total_findings": len(crashes) + len(false_negatives),
         "crashes_path": str(crashes_path),
     }
     summary_path.write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
-    sys.exit(1 if crashes else 0)
+    sys.exit(1 if (crashes or false_negatives) else 0)
 
 
 if __name__ == "__main__":

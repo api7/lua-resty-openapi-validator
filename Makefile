@@ -42,6 +42,11 @@ test-conformance:
 lint:
 	luacheck -q lib/
 
+### fuzz:          Run mutation fuzzer (FUZZ_BUDGET seconds, default 60)
+FUZZ_BUDGET ?= 60
+fuzz:
+	python3 fuzz/mutate_fuzz.py --budget $(FUZZ_BUDGET) --out fuzz/out
+
 ### clean:         Remove build artifacts
 clean:
-	rm -rf *.rock
+	rm -rf *.rock fuzz/out

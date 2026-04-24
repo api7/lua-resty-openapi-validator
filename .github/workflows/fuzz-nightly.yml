@@ -70,7 +70,13 @@ jobs:
         continue-on-error: true
         run: |
           export PATH=$OPENRESTY_PREFIX/nginx/sbin:$OPENRESTY_PREFIX/bin:$PATH
-          make fuzz FUZZ_BUDGET=$FUZZ_BUDGET
+          case "$FUZZ_BUDGET" in
+            ''|*[!0-9]*)
+              echo "FUZZ_BUDGET must be an integer number of seconds" >&2
+              exit 2
+              ;;
+          esac
+          make fuzz "FUZZ_BUDGET=$FUZZ_BUDGET"
 
       - name: Upload findings
         if: steps.fuzz.outcome == 'failure'
@@ -112,7 +118,7 @@ jobs:
 
           # De-dup: reuse any open issue with the fuzz-nightly label.
           existing=$(gh issue list --label fuzz-nightly --state open \
-            --json number --jq '.[0].number' || echo "")
+            --json number --jq '.[0].number // empty' || echo "")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$BODY"
             gh issue edit "$existing" --add-assignee jarvis9443 || true

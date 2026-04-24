@@ -15,7 +15,7 @@ bugs:
        (`/users/{id}` -> `/users/{id}.json`)
     2. Add `nullable: true` (and sometimes `null` to enum/const)
     3. Add length keywords (`maxLength`, `minLength`) to non-string types
-    4. Switch query param `style` between simple/form/pipeDelimited/
+    4. Switch query param `style` between form/pipeDelimited/
        spaceDelimited and toggle `explode`
     5. Add `required` references to non-existent properties
     6. Swap scalar types (`integer` <-> `string` <-> `number` <-> `boolean`)
@@ -26,6 +26,7 @@ non-zero if any crash or false negative was found (so CI can flag).
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import random
@@ -43,7 +44,7 @@ ROOT = HERE.parent
 
 LITERAL_EXTS = [".json", ".xml", ".txt", ".v2"]
 SCALAR_TYPES = ["string", "integer", "number", "boolean"]
-ARRAY_STYLES = ["simple", "form", "pipeDelimited", "spaceDelimited"]
+ARRAY_STYLES = ["form", "pipeDelimited", "spaceDelimited"]
 
 
 def _walk(node: Any, fn, path=()):
@@ -183,6 +184,34 @@ def mutate(spec: dict, n: int, rng: random.Random) -> list[str]:
     return applied
 
 
+# $ref resolution ---------------------------------------------------------------
+
+def resolve_refs(spec: dict) -> dict:
+    """Recursively resolve all $ref pointers in the spec (in-place)."""
+    def _resolve(node, root):
+        if isinstance(node, dict):
+            if "$ref" in node and isinstance(node["$ref"], str):
+                ref = node["$ref"]
+                if ref.startswith("#/"):
+                    parts = ref[2:].split("/")
+                    target = root
+                    for p in parts:
+                        p = p.replace("~1", "/").replace("~0", "~")
+                        if isinstance(target, dict):
+                            target = target.get(p)
+                        else:
+                            return node
+                    if isinstance(target, dict):
+                        resolved = copy.deepcopy(target)
+                        return _resolve(resolved, root)
+                return node
+            return {k: _resolve(v, root) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_resolve(item, root) for item in node]
+        return node
+    return _resolve(spec, spec)
+
+
 # Case generation -------------------------------------------------------------
 
 def _sample_string(rng: random.Random, schema: dict) -> str:
@@ -214,6 +243,12 @@ def sample_value(schema: dict, rng: random.Random, depth: int = 0):
         return None
     if schema.get("nullable") and rng.random() < 0.2:
         return None
+    # Handle const/enum generically before type-specific branches
+    if "const" in schema:
+        return schema["const"]
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        return rng.choice(enum)
     t = schema.get("type")
     if isinstance(t, list):
         t = rng.choice([x for x in t if x != "null"] or t)
@@ -222,7 +257,13 @@ def sample_value(schema: dict, rng: random.Random, depth: int = 0):
     if t == "integer":
         lo = schema.get("minimum", 0)
         hi = schema.get("maximum", lo + 100)
-        return rng.randint(int(lo), int(hi))
+        try:
+            lo, hi = int(lo), int(hi)
+        except (TypeError, ValueError):
+            lo, hi = 0, 100
+        if lo > hi:
+            lo, hi = hi, lo
+        return rng.randint(lo, hi)
     if t == "number":
         return float(rng.randint(0, 100))
     if t == "boolean":
@@ -289,13 +330,17 @@ def gen_cases(spec: dict, rng: random.Random, max_per_op: int = 2) -> list[dict]
                 if val is None:
                     val = "x"
                 if p.get("in") == "query":
-                    # For style=form&explode=true with array, send list
                     if isinstance(val, list) and p.get("explode", True):
                         req["query"][p["name"]] = val
+                    elif isinstance(val, list):
+                        style = p.get("style", "form")
+                        delim = {
+                            "pipeDelimited": "|",
+                            "spaceDelimited": " ",
+                        }.get(style, ",")
+                        req["query"][p["name"]] = delim.join(map(str, val))
                     else:
-                        req["query"][p["name"]] = (
-                            ",".join(map(str, val)) if isinstance(val, list) else val
-                        )
+                        req["query"][p["name"]] = val
                 elif p.get("in") == "header":
                     req["headers"][p["name"]] = str(val)
 
@@ -420,74 +465,76 @@ def main():
     cases_run = 0
     t0 = time.time()
 
-    with crashes_path.open("w") as crashf:
-        while time.time() - t0 < args.budget:
-            seed_path = rng.choice(seeds)
-            spec = json.loads(seed_path.read_text())
-            spec.pop("servers", None)
-            applied = mutate(spec, args.mutations, rng)
-            cases = gen_cases(spec, rng, max_per_op=2)
-            if not cases:
-                continue
-            results = run_validator(spec, cases, args.deps, args.lib, args.include)
-            cases_run += len(cases)
-            rounds += 1
-            for r in results:
-                phase = r.get("phase")
-                if phase in ("crash", "subprocess_error", "timeout"):
-                    rec = {"kind": "crash", "seed": seed_path.name, "applied": applied,
-                           "result": r}
-                    crashes.append(rec)
-                    crashf.write(json.dumps(rec) + "\n")
-                    crashf.flush()
-                    print(f"CRASH on {seed_path.name} after {applied}: "
-                          f"{str(r.get('err') or r.get('stderr'))[:200]}",
-                          file=sys.stderr)
-                elif phase == "ok" and r.get("label") == "positive" and not r.get("accepted"):
-                    err = (r.get("err") or "").lower()
-                    noisy = any(s in err for s in (
-                        "matches none of the required",
-                        "match only one schema",
-                        "discriminator",
-                        "failed to match pattern",
-                        "string too short, expected at least",
-                        "string too long",
-                        "expected at most",
-                        "expected at least",
-                        "additionalproperties",
-                        "minimum",
-                        "maximum",
-                        "uniqueitems",
-                        "format",
-                        "got userdata",
-                        "expected integer, got",
-                        "expected number, got",
-                        "expected boolean, got",
-                        "is required",
-                        "failed to validate item",
-                    ))
-                    if noisy:
-                        continue
-                    rec = {"kind": "false_negative", "seed": seed_path.name,
-                           "applied": applied, "result": r}
-                    false_negatives.append(rec)
-                    crashf.write(json.dumps(rec) + "\n")
-                    crashf.flush()
-                    print(f"FALSE_NEGATIVE on {seed_path.name} after {applied}: "
-                          f"op={r.get('op')} err={(r.get('err') or '')[:200]}",
-                          file=sys.stderr)
-
-    summary = {
-        "rounds": rounds,
-        "cases_run": cases_run,
-        "elapsed_s": round(time.time() - t0, 2),
-        "crash_count": len(crashes),
-        "false_negative_count": len(false_negatives),
-        "total_findings": len(crashes) + len(false_negatives),
-        "crashes_path": str(crashes_path),
-    }
-    summary_path.write_text(json.dumps(summary, indent=2))
-    print(json.dumps(summary, indent=2))
+    try:
+        with crashes_path.open("w") as crashf:
+            while time.time() - t0 < args.budget:
+                seed_path = rng.choice(seeds)
+                spec = json.loads(seed_path.read_text())
+                spec.pop("servers", None)
+                applied = mutate(spec, args.mutations, rng)
+                resolved = resolve_refs(spec)
+                cases = gen_cases(resolved, rng, max_per_op=2)
+                if not cases:
+                    continue
+                results = run_validator(spec, cases, args.deps, args.lib, args.include)
+                cases_run += len(cases)
+                rounds += 1
+                for r in results:
+                    phase = r.get("phase")
+                    if phase in ("crash", "subprocess_error", "timeout"):
+                        rec = {"kind": "crash", "seed": seed_path.name, "applied": applied,
+                               "result": r}
+                        crashes.append(rec)
+                        crashf.write(json.dumps(rec) + "\n")
+                        crashf.flush()
+                        print(f"CRASH on {seed_path.name} after {applied}: "
+                              f"{str(r.get('err') or r.get('stderr'))[:200]}",
+                              file=sys.stderr)
+                    elif phase == "ok" and r.get("label") == "positive" and not r.get("accepted"):
+                        err = (r.get("err") or "").lower()
+                        noisy = any(s in err for s in (
+                            "matches none of the required",
+                            "match only one schema",
+                            "discriminator",
+                            "failed to match pattern",
+                            "string too short, expected at least",
+                            "string too long",
+                            "expected at most",
+                            "expected at least",
+                            "additionalproperties",
+                            "minimum",
+                            "maximum",
+                            "uniqueitems",
+                            "format",
+                            "got userdata",
+                            "expected integer, got",
+                            "expected number, got",
+                            "expected boolean, got",
+                            "is required",
+                            "failed to validate item",
+                        ))
+                        if noisy:
+                            continue
+                        rec = {"kind": "false_negative", "seed": seed_path.name,
+                               "applied": applied, "result": r}
+                        false_negatives.append(rec)
+                        crashf.write(json.dumps(rec) + "\n")
+                        crashf.flush()
+                        print(f"FALSE_NEGATIVE on {seed_path.name} after {applied}: "
+                              f"op={r.get('op')} err={(r.get('err') or '')[:200]}",
+                              file=sys.stderr)
+    finally:
+        summary = {
+            "rounds": rounds,
+            "cases_run": cases_run,
+            "elapsed_s": round(time.time() - t0, 2),
+            "crash_count": len(crashes),
+            "false_negative_count": len(false_negatives),
+            "total_findings": len(crashes) + len(false_negatives),
+            "crashes_path": str(crashes_path),
+        }
+        summary_path.write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2))
     sys.exit(1 if (crashes or false_negatives) else 0)
 
 

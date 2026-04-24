@@ -15,7 +15,7 @@ unfixed validator, `utf8_len(table)` Bug 3 against the unfixed jsonschema).
 
 ## Architecture
 
-```
+```text
 mutate_fuzz.py (Python orchestrator)
    ├─ pick a seed spec from fuzz/seeds/
    ├─ apply N random mutations (mutators below)

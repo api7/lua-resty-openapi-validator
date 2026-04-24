@@ -188,11 +188,13 @@ def mutate(spec: dict, n: int, rng: random.Random) -> list[str]:
 
 def resolve_refs(spec: dict) -> dict:
     """Recursively resolve all $ref pointers in the spec (in-place)."""
-    def _resolve(node, root):
+    def _resolve(node, root, seen_refs):
         if isinstance(node, dict):
             if "$ref" in node and isinstance(node["$ref"], str):
                 ref = node["$ref"]
                 if ref.startswith("#/"):
+                    if ref in seen_refs:
+                        return node
                     parts = ref[2:].split("/")
                     target = root
                     for p in parts:
@@ -203,13 +205,13 @@ def resolve_refs(spec: dict) -> dict:
                             return node
                     if isinstance(target, dict):
                         resolved = copy.deepcopy(target)
-                        return _resolve(resolved, root)
+                        return _resolve(resolved, root, seen_refs | {ref})
                 return node
-            return {k: _resolve(v, root) for k, v in node.items()}
+            return {k: _resolve(v, root, seen_refs) for k, v in node.items()}
         if isinstance(node, list):
-            return [_resolve(item, root) for item in node]
+            return [_resolve(item, root, seen_refs) for item in node]
         return node
-    return _resolve(spec, spec)
+    return _resolve(spec, spec, set())
 
 
 # Case generation -------------------------------------------------------------
@@ -283,6 +285,15 @@ def sample_value(schema: dict, rng: random.Random, depth: int = 0):
     return None
 
 
+def _merged_parameters(path_item: dict, op: dict) -> list[dict]:
+    """Merge path-item and operation-level parameters (op overrides)."""
+    merged = {}
+    for p in (path_item.get("parameters") or []) + (op.get("parameters") or []):
+        if isinstance(p, dict):
+            merged[(p.get("name"), p.get("in"))] = p
+    return list(merged.values())
+
+
 def gen_cases(spec: dict, rng: random.Random, max_per_op: int = 2) -> list[dict]:
     """Generate a small set of positive requests per op (oracle: must accept)."""
     cases = []
@@ -299,10 +310,12 @@ def gen_cases(spec: dict, rng: random.Random, max_per_op: int = 2) -> list[dict]
                 break
             op_count += 1
 
-            # Concrete path: substitute each {token} with a small value matching
-            # any declared path-parameter schema.
-            path_params = {p["name"]: p for p in (op.get("parameters") or [])
-                           if isinstance(p, dict) and p.get("in") == "path"}
+            params = _merged_parameters(item, op)
+            path_params = {
+                p["name"]: p
+                for p in params
+                if p.get("in") == "path" and isinstance(p.get("name"), str)
+            }
             concrete = path
             for token in (s.split("}", 1)[0] for s in path.split("{")[1:]):
                 pp = path_params.get(token, {})
@@ -319,8 +332,7 @@ def gen_cases(spec: dict, rng: random.Random, max_per_op: int = 2) -> list[dict]
                 "headers": {},
             }
 
-            # Required query/header params: fill with conforming values
-            for p in op.get("parameters") or []:
+            for p in params:
                 if not isinstance(p, dict):
                     continue
                 if not p.get("required"):
@@ -413,11 +425,15 @@ def run_validator(spec: dict, cases: list[dict], deps: str, lib: str,
     except subprocess.TimeoutExpired:
         return [{"phase": "timeout", "stderr": "validator subprocess timed out"}]
     out = []
+    bad_lines = 0
     for line in r.stdout.splitlines():
         try:
             out.append(json.loads(line))
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            bad_lines += 1
+    if bad_lines and not out:
+        out.append({"phase": "subprocess_error", "rc": r.returncode,
+                     "stderr": f"malformed validator JSONL output ({bad_lines} lines)"})
     if r.returncode != 0 and not out:
         out.append({"phase": "subprocess_error", "rc": r.returncode,
                     "stderr": r.stderr[-2000:]})

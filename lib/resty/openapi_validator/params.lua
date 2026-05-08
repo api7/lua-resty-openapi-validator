@@ -453,7 +453,12 @@ function _M.validate(route, path_params, query_args, headers, skip)
     end
 
     if not skip.header and route.params.header then
-        validate_param_group(route.params.header, "header", headers)
+        -- Normalize header keys to lowercase for case-insensitive matching
+        local lower_headers = {}
+        for k, v in pairs(headers) do
+            lower_headers[str_lower(k)] = v
+        end
+        validate_param_group(route.params.header, "header", lower_headers)
     end
 
     if #errs > 0 then

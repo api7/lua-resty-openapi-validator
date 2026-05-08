@@ -46,7 +46,33 @@ T.describe("header: missing required headers", function()
     T.like(err, "[Cc]ontent%-[Tt]ype", "error mentions Content-Type")
 end)
 
--- TEST 3: skip header validation
+-- TEST 3: case-insensitive header matching (spec lowercase, request canonical case)
+T.describe("header: case-insensitive match with canonical case keys", function()
+    local ok, err = validator:validate_request({
+        method = "GET",
+        path = "/validateHeaders",
+        headers = {
+            ["Authorization"] = "Bearer dGVzdA==.dGVzdA==.dGVzdA==",
+            ["Content-Type"] = "application/json",
+        },
+    })
+    T.ok(ok, "canonical case headers pass: " .. tostring(err))
+end)
+
+-- TEST 4: case-insensitive header matching (spec lowercase, request mixed case)
+T.describe("header: case-insensitive match with mixed case keys", function()
+    local ok, err = validator:validate_request({
+        method = "GET",
+        path = "/validateHeaders",
+        headers = {
+            ["AUTHORIZATION"] = "Bearer dGVzdA==.dGVzdA==.dGVzdA==",
+            ["CONTENT-TYPE"] = "application/json",
+        },
+    })
+    T.ok(ok, "uppercase headers pass: " .. tostring(err))
+end)
+
+-- TEST 5: skip header validation
 T.describe("header: skip header validation", function()
     local ok, err = validator:validate_request({
         method = "GET",

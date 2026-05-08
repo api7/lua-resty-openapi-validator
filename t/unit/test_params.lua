@@ -315,4 +315,42 @@ T.describe("params: deepObject anyOf composed (allOf) object branch", function()
     T.ok(not errs or #errs == 0, "no errors")
 end)
 
+-- Header case-insensitive matching: spec has lowercase name, request has
+-- canonical case key (e.g. HTTP/1.1 clients sending X-Client-Id).
+T.describe("params: header case-insensitive match (canonical case)", function()
+    local route = make_route({
+        { name = "x-client-id", ["in"] = "header", required = true,
+          schema = { type = "string" } },
+    }, "header")
+
+    local ok, errs = params_mod.validate(route, {}, {},
+        { ["X-Client-Id"] = "test123" })
+    T.ok(ok, "canonical case header found")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: header case-insensitive match (uppercase)", function()
+    local route = make_route({
+        { name = "x-client-id", ["in"] = "header", required = true,
+          schema = { type = "string" } },
+    }, "header")
+
+    local ok, errs = params_mod.validate(route, {}, {},
+        { ["X-CLIENT-ID"] = "test123" })
+    T.ok(ok, "uppercase header found")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
+T.describe("params: header case-insensitive match (spec has mixed case)", function()
+    local route = make_route({
+        { name = "Authorization", ["in"] = "header", required = true,
+          schema = { type = "string" } },
+    }, "header")
+
+    local ok, errs = params_mod.validate(route, {}, {},
+        { ["authorization"] = "Bearer token" })
+    T.ok(ok, "lowercase header matches mixed-case spec name")
+    T.ok(not errs or #errs == 0, "no errors")
+end)
+
 T.done()

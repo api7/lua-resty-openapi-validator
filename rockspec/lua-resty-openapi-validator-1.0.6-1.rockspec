@@ -1,16 +1,20 @@
 package = "lua-resty-openapi-validator"
-version = "master-0.1-0"
+version = "1.0.6-1"
 
 source = {
     url = "git+https://github.com/api7/lua-resty-openapi-validator.git",
-    branch = "main",
+    tag = "v1.0.6",
 }
 
 description = {
     summary = "Pure Lua OpenAPI request validator for OpenResty",
+    detailed = [[
+        Validates HTTP requests against OpenAPI 3.0 and 3.1 specifications
+        using lua-resty-radixtree for path matching and api7/jsonschema for
+        schema validation. No Go FFI or external processes required.
+    ]],
     homepage = "https://github.com/api7/lua-resty-openapi-validator",
     license = "Apache-2.0",
-    maintainer = "API7.ai",
 }
 
 dependencies = {

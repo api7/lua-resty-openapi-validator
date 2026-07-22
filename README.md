@@ -32,7 +32,7 @@ Install
 
 - [api7/jsonschema](https://github.com/api7/jsonschema) — JSON Schema Draft 4/6/7 validation
 - [lua-resty-radixtree](https://github.com/api7/lua-resty-radixtree) — radix tree path routing
-- [lua-cjson](https://github.com/openresty/lua-cjson) — JSON encoding/decoding
+- [lua-cjson](https://github.com/openresty/lua-cjson) — JSON encoding/decoding (bundled with OpenResty, not installed via LuaRocks)
 
 > install by luarocks
 
